@@ -45,6 +45,12 @@ func (k *Keeper) RefundGas(ctx sdk.Context, msg core.Message, leftoverGas uint64
 		return nil
 	}
 
+	// Check if gas is zero
+	if msg.Gas() == 0 {
+		// If gas is zero, we cannot refund anything, so we return early
+		return nil
+	}
+
 	switch remaining.Sign() {
 	case -1:
 		// negative refund errors
