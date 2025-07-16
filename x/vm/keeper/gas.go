@@ -44,7 +44,7 @@ func (k *Keeper) RefundGas(ctx sdk.Context, msg core.Message, leftoverGas uint64
 		// This is used when fee abstraction is applied into the fee payment
 		// If no value is found under the context, the original denom is used
 		if val := ctx.Value(ContextPaidFeesKey{}); val != nil {
-			// We check if a coin exists under the value and if its not empty
+			// We check if a coin exists under the value and if it's not empty
 			if paidCoins, ok := val.(sdk.Coins); ok && !paidCoins.IsZero() {
 				// We know that only a single coin is used for EVM payments
 				if len(paidCoins) != 1 {
