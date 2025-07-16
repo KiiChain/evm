@@ -35,6 +35,12 @@ func (k *Keeper) RefundGas(ctx sdk.Context, msg core.Message, leftoverGas uint64
 	// Return EVM tokens for remaining gas, exchanged at the original rate.
 	remaining := new(big.Int).Mul(new(big.Int).SetUint64(leftoverGas), msg.GasPrice())
 
+	// Check if gas is zero
+	if msg.Gas() == 0 {
+		// If gas is zero, we cannot refund anything, so we return early
+		return nil
+	}
+
 	switch remaining.Sign() {
 	case -1:
 		// negative refund errors
