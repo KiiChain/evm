@@ -31,22 +31,15 @@ func (k *Keeper) GetEthIntrinsicGas(ctx sdk.Context, msg core.Message, cfg *para
 		homestead, istanbul, shanghai)
 }
 
-// RefundGas transfers the leftover gas to the sender of the message, capped to half of the total gas
-// consumed in the transaction. Additionally, the function sets the total gas consumed to the value
-// returned by the EVM execution, thus ignoring the previous intrinsic gas consumed during in the
-// AnteHandler.
-func (k *Keeper) RefundGas(ctx sdk.Context, msg core.Message, leftoverGas uint64, gasUsed uint64, denom string) error {
+// RefundGas transfers the value of the leftover gas to the sender of the message. The refund is
+// bounded by the paid fee: it is computed against the full transaction gas (gasUsed + leftoverGas),
+// so the sender can never receive more than what was charged upfront.
+func (k *Keeper) RefundGas(ctx sdk.Context, msg core.Message, leftoverGas, gasUsed uint64, denom string) error {
 	// Return EVM tokens for remaining gas, exchanged at the original rate.
 	remaining := new(big.Int).Mul(new(big.Int).SetUint64(leftoverGas), msg.GasPrice)
 
 	// Check if gas is zero
 	if gasUsed == 0 {
-		// If gas is zero, we cannot refund anything, so we return early
-		return nil
-	}
-
-	// Check if gas is zero
-	if msg.Gas() == 0 {
 		// If gas is zero, we cannot refund anything, so we return early
 		return nil
 	}
@@ -73,12 +66,9 @@ func (k *Keeper) RefundGas(ctx sdk.Context, msg core.Message, leftoverGas uint64
 				denom = paidCoin.Denom
 				amount := paidCoin.Amount.BigInt()
 
-				// Calculate the amount to refund
-				// This is calculated as:
-				// remaining = amount * leftoverGas / gasUsed
 				remaining = new(big.Int).Div(
 					new(big.Int).Mul(amount, new(big.Int).SetUint64(leftoverGas)),
-					new(big.Int).SetUint64(gasUsed),
+					new(big.Int).SetUint64(msg.GasLimit),
 				)
 			}
 		}

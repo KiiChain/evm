@@ -193,7 +193,7 @@ func (suite *KeeperTestSuite) TestGasRefundGas() {
 				ctx,
 				*coreMsg,
 				tc.leftoverGas,
-				DefaultCoreMsgGasUsage,
+				DefaultCoreMsgGasUsage-tc.leftoverGas,
 				baseDenom,
 			)
 
@@ -213,4 +213,67 @@ func (suite *KeeperTestSuite) TestGasRefundGas() {
 			}
 		})
 	}
+}
+
+// TestGasRefundGasNoOverRefund guards against the fee_collector drain where the fee-abstraction
+// refund used the consumed gas instead of the gas limit as the denominator. With a gas limit far
+// greater than the gas used, the refund must never exceed the value of the unused gas.
+func (suite *KeeperTestSuite) TestGasRefundGasNoOverRefund() {
+	baseDenom := types.GetEVMCoinDenom()
+
+	feeAddress := authtypes.NewModuleAddress(authtypes.FeeCollectorName)
+	balances := []banktypes.Balance{
+		{
+			Address: feeAddress.String(),
+			Coins:   sdk.NewCoins(sdk.NewCoin(baseDenom, sdkmath.NewInt(6e18))),
+		},
+	}
+	bankGenesis := banktypes.DefaultGenesisState()
+	bankGenesis.Balances = balances
+	customGenesis := network.CustomGenesisState{}
+	customGenesis[banktypes.ModuleName] = bankGenesis
+
+	keyring := testkeyring.New(2)
+	unitNetwork := network.NewUnitTestNetwork(
+		suite.Create,
+		network.WithPreFundedAccounts(keyring.GetAllAccAddrs()...),
+		network.WithCustomGenesis(customGenesis),
+	)
+	grpcHandler := grpc.NewIntegrationHandler(unitNetwork)
+	txFactory := factory.New(unitNetwork, grpcHandler)
+
+	sender := keyring.GetKey(0)
+	recipient := keyring.GetAddr(1)
+
+	const gasLimit = uint64(100000)
+	const gasUsed = uint64(21000)
+	const leftoverGas = gasLimit - gasUsed
+
+	coreMsg, err := txFactory.GenerateGethCoreMsg(
+		sender.Priv,
+		types.EvmTxArgs{
+			To:       &recipient,
+			Amount:   big.NewInt(100),
+			GasPrice: big.NewInt(DefaultGasPrice),
+			GasLimit: gasLimit,
+		},
+	)
+	suite.Require().NoError(err)
+
+	ctx, _ := unitNetwork.GetContext().CacheContext()
+
+	paidFee := sdkmath.NewInt(int64(gasLimit) * DefaultGasPrice)
+	ctx = ctx.WithValue(keeper.ContextPaidFeesKey{}, sdk.NewCoins(sdk.NewCoin(baseDenom, paidFee)))
+
+	initialFeeCollector := unitNetwork.App.GetBankKeeper().GetBalance(ctx, feeAddress, baseDenom).Amount
+
+	err = unitNetwork.App.GetEVMKeeper().RefundGas(ctx, *coreMsg, leftoverGas, gasUsed, baseDenom)
+	suite.Require().NoError(err)
+
+	finalFeeCollector := unitNetwork.App.GetBankKeeper().GetBalance(ctx, feeAddress, baseDenom).Amount
+	refunded := initialFeeCollector.Sub(finalFeeCollector)
+
+	expectedRefund := sdkmath.NewInt(int64(leftoverGas) * DefaultGasPrice)
+	suite.Require().Equal(expectedRefund, refunded)
+	suite.Require().True(refunded.LTE(paidFee))
 }
