@@ -40,7 +40,7 @@ func (k *Keeper) RefundGas(ctx sdk.Context, msg core.Message, leftoverGas uint64
 	remaining := new(big.Int).Mul(new(big.Int).SetUint64(leftoverGas), msg.GasPrice)
 
 	// Check if gas is zero
-	if msg.Gas() == 0 {
+	if msg.GasLimit == 0 {
 		// If gas is zero, we cannot refund anything, so we return early
 		return nil
 	}
@@ -72,7 +72,7 @@ func (k *Keeper) RefundGas(ctx sdk.Context, msg core.Message, leftoverGas uint64
 				// remaining = amount * leftoverGas / gasUsed
 				remaining = new(big.Int).Div(
 					new(big.Int).Mul(amount, new(big.Int).SetUint64(leftoverGas)),
-					new(big.Int).SetUint64(msg.Gas()),
+					new(big.Int).SetUint64(msg.GasLimit),
 				)
 			}
 		}

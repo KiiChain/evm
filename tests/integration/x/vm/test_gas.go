@@ -1,4 +1,4 @@
-package keeper_test
+package vm
 
 import (
 	"math/big"
@@ -7,9 +7,9 @@ import (
 	sdk "github.com/cosmos/cosmos-sdk/types"
 	authtypes "github.com/cosmos/cosmos-sdk/x/auth/types"
 	govtypes "github.com/cosmos/cosmos-sdk/x/gov/types"
-	"github.com/cosmos/evm/testutil/integration/os/factory"
-	"github.com/cosmos/evm/testutil/integration/os/grpc"
-	testkeyring "github.com/cosmos/evm/testutil/integration/os/keyring"
+	"github.com/cosmos/evm/testutil/integration/evm/factory"
+	"github.com/cosmos/evm/testutil/integration/evm/grpc"
+	testkeyring "github.com/cosmos/evm/testutil/keyring"
 	erc20mocks "github.com/cosmos/evm/x/erc20/types/mocks"
 	"github.com/cosmos/evm/x/vm/keeper"
 	"github.com/cosmos/evm/x/vm/types"
@@ -25,8 +25,8 @@ const (
 // The gas part on the name refers to the file name to not generate a duplicated test name
 func (suite *KeeperTestSuite) TestGasRefundGas() {
 	// Create a txFactory
-	grpcHandler := grpc.NewIntegrationHandler(suite.network)
-	txFactory := factory.New(suite.network, grpcHandler)
+	grpcHandler := grpc.NewIntegrationHandler(suite.Network)
+	txFactory := factory.New(suite.Network, grpcHandler)
 
 	// Create a core message to use for the test
 	keyring := testkeyring.New(2)
@@ -54,21 +54,21 @@ func (suite *KeeperTestSuite) TestGasRefundGas() {
 			name:        "Refund the full value as no gas was used",
 			leftoverGas: DefaultCoreMsgGasUsage,
 			expectedRefund: sdk.NewCoins(
-				sdk.NewCoin(suite.network.GetBaseDenom(), sdkmath.NewInt(DefaultCoreMsgGasUsage*DefaultGasPrice)),
+				sdk.NewCoin(suite.Network.GetBaseDenom(), sdkmath.NewInt(DefaultCoreMsgGasUsage*DefaultGasPrice)),
 			),
 		},
 		{
 			name:        "Refund half the value as half gas was used",
 			leftoverGas: DefaultCoreMsgGasUsage / 2,
 			expectedRefund: sdk.NewCoins(
-				sdk.NewCoin(suite.network.GetBaseDenom(), sdkmath.NewInt((DefaultCoreMsgGasUsage*DefaultGasPrice)/2)),
+				sdk.NewCoin(suite.Network.GetBaseDenom(), sdkmath.NewInt((DefaultCoreMsgGasUsage*DefaultGasPrice)/2)),
 			),
 		},
 		{
 			name:        "No refund as no gas was left over used",
 			leftoverGas: 0,
 			expectedRefund: sdk.NewCoins(
-				sdk.NewCoin(suite.network.GetBaseDenom(), sdkmath.NewInt(0)),
+				sdk.NewCoin(suite.Network.GetBaseDenom(), sdkmath.NewInt(0)),
 			),
 		},
 		{
@@ -143,7 +143,7 @@ func (suite *KeeperTestSuite) TestGasRefundGas() {
 	for _, tc := range testCases {
 		suite.Run(tc.name, func() {
 			// Generate a cached context to not leak data between tests
-			ctx, _ := suite.network.GetContext().CacheContext()
+			ctx, _ := suite.Network.GetContext().CacheContext()
 
 			// Create a new controller for the mock
 			ctrl := gomock.NewController(suite.T())
@@ -172,25 +172,26 @@ func (suite *KeeperTestSuite) TestGasRefundGas() {
 			// Initialize a new EVM keeper with the mock bank keeper
 			// We need to redo this every time, since we will apply the mocked bank keeper at this step
 			evmKeeper := keeper.NewKeeper(
-				suite.network.App.AppCodec(),
-				suite.network.App.GetKey(types.StoreKey),
-				suite.network.App.GetTKey(types.StoreKey),
+				suite.Network.App.AppCodec(),
+				suite.Network.App.GetKey(types.StoreKey),
+				suite.Network.App.GetKey(types.StoreKey),
+				suite.Network.App.GetEVMKeeper().KVStoreKeys(),
 				authtypes.NewModuleAddress(govtypes.ModuleName),
-				suite.network.App.AccountKeeper,
+				suite.Network.App.GetAccountKeeper(),
 				mockBankKeeper,
-				suite.network.App.StakingKeeper,
-				suite.network.App.FeeMarketKeeper,
-				suite.network.App.Erc20Keeper,
+				suite.Network.App.GetStakingKeeper(),
+				suite.Network.App.GetFeeMarketKeeper(),
+				suite.Network.App.GetConsensusParamsKeeper(),
+				suite.Network.App.GetErc20Keeper(),
 				"",
-				suite.network.App.GetSubspace(types.ModuleName),
 			)
 
 			// Call the msg, not further checks are needed, all balance checks are done in the mock
 			err := evmKeeper.RefundGas(
 				ctx,
-				coreMsg,
+				*coreMsg,
 				tc.leftoverGas,
-				suite.network.GetBaseDenom(),
+				suite.Network.GetBaseDenom(),
 			)
 
 			// Check the error
