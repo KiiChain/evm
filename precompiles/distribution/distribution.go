@@ -4,16 +4,20 @@ import (
 	"embed"
 	"fmt"
 
-	storetypes "cosmossdk.io/store/types"
-	authzkeeper "github.com/cosmos/cosmos-sdk/x/authz/keeper"
-	distributionkeeper "github.com/cosmos/cosmos-sdk/x/distribution/keeper"
-	stakingkeeper "github.com/cosmos/cosmos-sdk/x/staking/keeper"
-	cmn "github.com/cosmos/evm/precompiles/common"
-	"github.com/cosmos/evm/x/vm/core/vm"
-	evmkeeper "github.com/cosmos/evm/x/vm/keeper"
-	evmtypes "github.com/cosmos/evm/x/vm/types"
 	"github.com/ethereum/go-ethereum/accounts/abi"
 	"github.com/ethereum/go-ethereum/common"
+	"github.com/ethereum/go-ethereum/core/tracing"
+	"github.com/ethereum/go-ethereum/core/vm"
+
+	cmn "github.com/cosmos/evm/precompiles/common"
+	evmkeeper "github.com/cosmos/evm/x/vm/keeper"
+	evmtypes "github.com/cosmos/evm/x/vm/types"
+
+	"cosmossdk.io/core/address"
+	storetypes "cosmossdk.io/store/types"
+
+	distributionkeeper "github.com/cosmos/cosmos-sdk/x/distribution/keeper"
+	stakingkeeper "github.com/cosmos/cosmos-sdk/x/staking/keeper"
 )
 
 var _ vm.PrecompiledContract = &Precompile{}
@@ -29,6 +33,7 @@ type Precompile struct {
 	distributionKeeper distributionkeeper.Keeper
 	stakingKeeper      stakingkeeper.Keeper
 	evmKeeper          *evmkeeper.Keeper
+	addrCdc            address.Codec
 }
 
 // NewPrecompile creates a new distribution Precompile instance as a
@@ -36,8 +41,8 @@ type Precompile struct {
 func NewPrecompile(
 	distributionKeeper distributionkeeper.Keeper,
 	stakingKeeper stakingkeeper.Keeper,
-	authzKeeper authzkeeper.Keeper,
 	evmKeeper *evmkeeper.Keeper,
+	addrCdc address.Codec,
 ) (*Precompile, error) {
 	newAbi, err := cmn.LoadABI(f, "abi.json")
 	if err != nil {
@@ -47,14 +52,13 @@ func NewPrecompile(
 	p := &Precompile{
 		Precompile: cmn.Precompile{
 			ABI:                  newAbi,
-			AuthzKeeper:          authzKeeper,
 			KvGasConfig:          storetypes.KVGasConfig(),
 			TransientKVGasConfig: storetypes.TransientGasConfig(),
-			ApprovalExpiration:   cmn.DefaultExpirationDuration, // should be configurable in the future.
 		},
 		stakingKeeper:      stakingKeeper,
 		distributionKeeper: distributionKeeper,
 		evmKeeper:          evmKeeper,
+		addrCdc:            addrCdc,
 	}
 
 	// SetAddress defines the address of the distribution compile contract.
@@ -85,10 +89,22 @@ func (p Precompile) RequiredGas(input []byte) uint64 {
 
 // Run executes the precompiled contract distribution methods defined in the ABI.
 func (p Precompile) Run(evm *vm.EVM, contract *vm.Contract, readOnly bool) (bz []byte, err error) {
-	ctx, stateDB, snapshot, method, initialGas, args, err := p.RunSetup(evm, contract, readOnly, p.IsTransaction)
+	bz, err = p.run(evm, contract, readOnly)
+	if err != nil {
+		return cmn.ReturnRevertError(evm, err)
+	}
+
+	return bz, nil
+}
+
+func (p Precompile) run(evm *vm.EVM, contract *vm.Contract, readOnly bool) (bz []byte, err error) {
+	ctx, stateDB, method, initialGas, args, err := p.RunSetup(evm, contract, readOnly, p.IsTransaction)
 	if err != nil {
 		return nil, err
 	}
+
+	// Start the balance change handler before executing the precompile.
+	p.GetBalanceHandler().BeforeBalanceChange(ctx)
 
 	// This handles any out of gas errors that may occur during the execution of a precompile tx or query.
 	// It avoids panics and returns the out of gas error so the EVM can continue gracefully.
@@ -97,16 +113,18 @@ func (p Precompile) Run(evm *vm.EVM, contract *vm.Contract, readOnly bool) (bz [
 	switch method.Name {
 	// Custom transactions
 	case ClaimRewardsMethod:
-		bz, err = p.ClaimRewards(ctx, evm.Origin, contract, stateDB, method, args)
+		bz, err = p.ClaimRewards(ctx, contract, stateDB, method, args)
 	// Distribution transactions
 	case SetWithdrawAddressMethod:
-		bz, err = p.SetWithdrawAddress(ctx, evm.Origin, contract, stateDB, method, args)
-	case WithdrawDelegatorRewardsMethod:
-		bz, err = p.WithdrawDelegatorRewards(ctx, evm.Origin, contract, stateDB, method, args)
+		bz, err = p.SetWithdrawAddress(ctx, contract, stateDB, method, args)
+	case WithdrawDelegatorRewardMethod:
+		bz, err = p.WithdrawDelegatorReward(ctx, contract, stateDB, method, args)
 	case WithdrawValidatorCommissionMethod:
-		bz, err = p.WithdrawValidatorCommission(ctx, evm.Origin, contract, stateDB, method, args)
+		bz, err = p.WithdrawValidatorCommission(ctx, contract, stateDB, method, args)
 	case FundCommunityPoolMethod:
-		bz, err = p.FundCommunityPool(ctx, evm.Origin, contract, stateDB, method, args)
+		bz, err = p.FundCommunityPool(ctx, contract, stateDB, method, args)
+	case DepositValidatorRewardsPoolMethod:
+		bz, err = p.DepositValidatorRewardsPool(ctx, contract, stateDB, method, args)
 	// Distribution queries
 	case ValidatorDistributionInfoMethod:
 		bz, err = p.ValidatorDistributionInfo(ctx, contract, method, args)
@@ -124,6 +142,8 @@ func (p Precompile) Run(evm *vm.EVM, contract *vm.Contract, readOnly bool) (bz [
 		bz, err = p.DelegatorValidators(ctx, contract, method, args)
 	case DelegatorWithdrawAddressMethod:
 		bz, err = p.DelegatorWithdrawAddress(ctx, contract, method, args)
+	case CommunityPoolMethod:
+		bz, err = p.CommunityPool(ctx, contract, method, args)
 	}
 
 	if err != nil {
@@ -132,11 +152,12 @@ func (p Precompile) Run(evm *vm.EVM, contract *vm.Contract, readOnly bool) (bz [
 
 	cost := ctx.GasMeter().GasConsumed() - initialGas
 
-	if !contract.UseGas(cost) {
+	if !contract.UseGas(cost, nil, tracing.GasChangeCallPrecompiledContract) {
 		return nil, vm.ErrOutOfGas
 	}
 
-	if err := p.AddJournalEntries(stateDB, snapshot); err != nil {
+	// Process the native balance changes after the method execution.
+	if err = p.GetBalanceHandler().AfterBalanceChange(ctx, stateDB); err != nil {
 		return nil, err
 	}
 
@@ -148,15 +169,18 @@ func (p Precompile) Run(evm *vm.EVM, contract *vm.Contract, readOnly bool) (bz [
 // Available distribution transactions are:
 //   - ClaimRewards
 //   - SetWithdrawAddress
-//   - WithdrawDelegatorRewards
+//   - WithdrawDelegatorReward
 //   - WithdrawValidatorCommission
+//   - FundCommunityPool
+//   - DepositValidatorRewardsPool
 func (Precompile) IsTransaction(method *abi.Method) bool {
 	switch method.Name {
 	case ClaimRewardsMethod,
 		SetWithdrawAddressMethod,
-		WithdrawDelegatorRewardsMethod,
+		WithdrawDelegatorRewardMethod,
 		WithdrawValidatorCommissionMethod,
-		FundCommunityPoolMethod:
+		FundCommunityPoolMethod,
+		DepositValidatorRewardsPoolMethod:
 		return true
 	default:
 		return false

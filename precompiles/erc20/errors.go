@@ -4,13 +4,10 @@ import (
 	"errors"
 	"strings"
 
-	"github.com/cosmos/cosmos-sdk/x/authz"
+	"github.com/ethereum/go-ethereum/core/vm"
+
 	"github.com/cosmos/evm/ibc"
 	cmn "github.com/cosmos/evm/precompiles/common"
-	"github.com/cosmos/evm/x/vm/core/vm"
-	evmtypes "github.com/cosmos/evm/x/vm/types"
-	"github.com/ethereum/go-ethereum/accounts/abi"
-	"github.com/ethereum/go-ethereum/crypto"
 )
 
 // Errors that have formatted information are defined here as a string.
@@ -24,9 +21,6 @@ const (
 )
 
 var (
-	// errorSignature are the prefix bytes for the hex-encoded reason string. See UnpackRevert in ABI implementation in Geth.
-	errorSignature = crypto.Keccak256([]byte("Error(string)"))
-
 	// Precompile errors
 	ErrDecreaseNonPositiveValue = errors.New("cannot decrease allowance with non-positive values")
 	ErrIncreaseNonPositiveValue = errors.New("cannot increase allowance with non-positive values")
@@ -38,29 +32,6 @@ var (
 	ErrInsufficientAllowance        = errors.New("ERC20: insufficient allowance")
 	ErrTransferAmountExceedsBalance = errors.New("ERC20: transfer amount exceeds balance")
 )
-
-// BuildExecRevertedErr returns a mocked error that should align with the
-// behavior of the original ERC20 Solidity implementation.
-//
-// FIXME: This is not yet producing the correct reason bytes. Will fix on a follow up PR.
-func BuildExecRevertedErr(reason string) (error, error) {
-	// This is reverse-engineering the ABI encoding of the revert reason.
-	typ, err := abi.NewType("string", "", nil)
-	if err != nil {
-		return nil, err
-	}
-
-	packedReason, err := (abi.Arguments{{Type: typ}}).Pack(reason)
-	if err != nil {
-		return nil, errors.New("failed to pack revert reason")
-	}
-
-	var reasonBytes []byte
-	reasonBytes = append(reasonBytes, errorSignature...)
-	reasonBytes = append(reasonBytes, packedReason...)
-
-	return evmtypes.NewExecErrorWithReason(reasonBytes), nil
-}
 
 // ConvertErrToERC20Error is a helper function which maps errors raised by the Cosmos SDK stack
 // to the corresponding errors which are raised by an ERC20 contract.
@@ -74,14 +45,12 @@ func ConvertErrToERC20Error(err error) error {
 		return ErrTransferAmountExceedsBalance
 	case strings.Contains(err.Error(), "requested amount is more than spend limit"):
 		return ErrInsufficientAllowance
-	case strings.Contains(err.Error(), authz.ErrNoAuthorizationFound.Error()):
-		return ErrInsufficientAllowance
 	case strings.Contains(err.Error(), "subtracted value cannot be greater than existing allowance"):
 		return ErrDecreasedAllowanceBelowZero
 	case strings.Contains(err.Error(), cmn.ErrIntegerOverflow):
 		return vm.ErrExecutionReverted
 	case errors.Is(err, ibc.ErrNoIBCVoucherDenom) ||
-		errors.Is(err, ibc.ErrDenomTraceNotFound) ||
+		errors.Is(err, ibc.ErrDenomNotFound) ||
 		strings.Contains(err.Error(), "invalid base denomination") ||
 		strings.Contains(err.Error(), "display denomination not found") ||
 		strings.Contains(err.Error(), "invalid decimals"):

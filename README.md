@@ -3,9 +3,12 @@ src="repo_header.png"
 alt="Cosmos EVM - A plug-and-play solution that adds EVM compatibility and customizability to your chain"
 />
 
-**Please note**: This repo is undergoing changes in preparation for a new audit. After this audit we will cut the first
-v1 release, targeting late Q2. Some breaking changes might occur. While the Cosmos EVM is currently being used in
-production on various chains without fault, Interchain Labs will only mark this repository as stable after the audit is completed.
+**Please note**: This repo is undergoing changes while the code is being audited and tested. For the time being we will
+be making v0.x releases. Some breaking changes might occur. While the original evmOS repo is currently being used in
+production on a few chains without fault, Interchain Labs will only mark the Cosmos EVM repository as stable with a v1
+release after the audit, key stability features and benchmarking are completed.
+
+**Visit the official documentation for Cosmos EVM**: [evm.cosmos.network](https://evm.cosmos.network/)
 
 ## What is Cosmos EVM?
 
@@ -107,7 +110,7 @@ Based on these powerful defaults, the feature set is easily and highly customiza
 - *JSON-RPC Server*
 
   There is full control over the exposed namespaces and fine-grained control of the
-  [JSON-RPC server](https://docs.evmos.org/develop/api/ethereum-json-rpc).
+  [JSON-RPC server](https://cosmos-docs.mintlify.app/docs/api-reference/ethereum-json-rpc).
   Adjust the configuration to your liking,
   including custom timeouts for EVM calls or HTTP requests,
   maximum block gas, the number of maximum open connections, and more.
@@ -120,13 +123,13 @@ Based on these powerful defaults, the feature set is easily and highly customiza
 - *Custom Improvement Proposals (Opcodes)*
 
   Any Cosmos EVM user is provided the opportunity to customize bits of their EVM opcodes and add new ones.
-  Read more on [custom operations here](https://docs.evmos.org/develop/smart-contracts/custom-improvement-proposals).
+  Read more on [custom operations here](https://cosmos-docs.mintlify.app/docs/documentation/smart-contracts/custom-improvement-proposals#custom-improvement-proposals).
 
 ### Forward-compatibility with Ethereum
 
 Ethereum-equivalence describes any EVM solution,
 that is identical in transaction execution to the Ethereum client.
-It does not more, but also not less than that.  
+It does not more, but also not less than that.
 Ethereum-compatible means,
 that the EVM can be set up to run every transaction that is valid on Ethereum,
 while the handling of the transactions can diverge in e.g. result or cost.
@@ -137,6 +140,57 @@ meaning that any Cosmos EVM chain can run any valid smart contract
 from Ethereum but can also implement new features that are
 not (yet) available on the standard Ethereum VM,
 thus moving the standard forward.
+
+## Getting started
+
+To run the example `evmd` chain, run the script using `./local_node.sh`
+from the root folder of the repository.
+
+### Migrations
+
+We provide upgrade guides [here](./docs/migrations) for upgrading your chain from various Cosmos EVM versions.
+
+### Testing
+
+All test scripts are found in `Makefile` in the root of the repository.
+Listed below are the commands for various tests:
+
+#### Unit Testing
+
+```bash
+make test-unit
+```
+
+#### Coverage Test
+
+This generates a code coverage file `filtered_coverage.txt` and prints out the
+covered code percentage for the working files.
+
+```bash
+make test-unit-cover
+```
+
+#### Fuzz Testing
+
+```bash
+make test-fuzz
+```
+
+#### Solidity Tests
+
+```bash
+make test-solidity
+```
+
+#### Benchmark Tests
+
+```bash
+make benchmark
+```
+
+## Contributing
+
+We welcome open source contributions and discussions! For more on contributing, read our [guide](./CONTRIBUTING.md).
 
 ## Open-source License & Credits
 

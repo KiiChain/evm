@@ -1,9 +1,12 @@
 package statedb
 
 import (
-	sdk "github.com/cosmos/cosmos-sdk/types"
-	"github.com/cosmos/evm/x/vm/core/vm"
 	"github.com/ethereum/go-ethereum/common"
+	"github.com/ethereum/go-ethereum/core/vm"
+
+	storetypes "cosmossdk.io/store/types"
+
+	sdk "github.com/cosmos/cosmos-sdk/types"
 )
 
 // ExtStateDB defines an extension to the interface provided by the go-ethereum
@@ -22,6 +25,7 @@ type Keeper interface {
 	GetAccount(ctx sdk.Context, addr common.Address) *Account
 	GetState(ctx sdk.Context, addr common.Address, key common.Hash) common.Hash
 	GetCode(ctx sdk.Context, codeHash common.Hash) []byte
+	GetCodeHash(ctx sdk.Context, addr common.Address) common.Hash
 	// the callback returns false to break early
 	ForEachStorage(ctx sdk.Context, addr common.Address, cb func(key, value common.Hash) bool)
 
@@ -32,4 +36,8 @@ type Keeper interface {
 	DeleteCode(ctx sdk.Context, codeHash []byte)
 	SetCode(ctx sdk.Context, codeHash []byte, code []byte)
 	DeleteAccount(ctx sdk.Context, addr common.Address) error
+
+	// Getter for injected KVStore keys
+	// It is used for StateDB.snapshotter creation
+	KVStoreKeys() map[string]*storetypes.KVStoreKey
 }

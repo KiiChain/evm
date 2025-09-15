@@ -4,18 +4,20 @@ import (
 	"embed"
 	"fmt"
 
-	storetypes "cosmossdk.io/store/types"
-	authzkeeper "github.com/cosmos/cosmos-sdk/x/authz/keeper"
-	stakingkeeper "github.com/cosmos/cosmos-sdk/x/staking/keeper"
-	"github.com/cosmos/evm/precompiles/authorization"
-	cmn "github.com/cosmos/evm/precompiles/common"
-	transferkeeper "github.com/cosmos/evm/x/ibc/transfer/keeper"
-	"github.com/cosmos/evm/x/vm/core/vm"
-	evmkeeper "github.com/cosmos/evm/x/vm/keeper"
-	evmtypes "github.com/cosmos/evm/x/vm/types"
-	channelkeeper "github.com/cosmos/ibc-go/v8/modules/core/04-channel/keeper"
 	"github.com/ethereum/go-ethereum/accounts/abi"
 	"github.com/ethereum/go-ethereum/common"
+	"github.com/ethereum/go-ethereum/core/tracing"
+	"github.com/ethereum/go-ethereum/core/vm"
+
+	cmn "github.com/cosmos/evm/precompiles/common"
+	transferkeeper "github.com/cosmos/evm/x/ibc/transfer/keeper"
+	evmkeeper "github.com/cosmos/evm/x/vm/keeper"
+	evmtypes "github.com/cosmos/evm/x/vm/types"
+	channelkeeper "github.com/cosmos/ibc-go/v10/modules/core/04-channel/keeper"
+
+	storetypes "cosmossdk.io/store/types"
+
+	stakingkeeper "github.com/cosmos/cosmos-sdk/x/staking/keeper"
 )
 
 // PrecompileAddress of the ICS-20 EVM extension in hex format.
@@ -30,19 +32,20 @@ var f embed.FS
 
 type Precompile struct {
 	cmn.Precompile
+	bankKeeper     cmn.BankKeeper
 	stakingKeeper  stakingkeeper.Keeper
 	transferKeeper transferkeeper.Keeper
-	channelKeeper  channelkeeper.Keeper
+	channelKeeper  *channelkeeper.Keeper
 	evmKeeper      *evmkeeper.Keeper
 }
 
 // NewPrecompile creates a new ICS-20 Precompile instance as a
 // PrecompiledContract interface.
 func NewPrecompile(
+	bankKeeper cmn.BankKeeper,
 	stakingKeeper stakingkeeper.Keeper,
 	transferKeeper transferkeeper.Keeper,
-	channelKeeper channelkeeper.Keeper,
-	authzKeeper authzkeeper.Keeper,
+	channelKeeper *channelkeeper.Keeper,
 	evmKeeper *evmkeeper.Keeper,
 ) (*Precompile, error) {
 	newAbi, err := cmn.LoadABI(f, "abi.json")
@@ -53,11 +56,10 @@ func NewPrecompile(
 	p := &Precompile{
 		Precompile: cmn.Precompile{
 			ABI:                  newAbi,
-			AuthzKeeper:          authzKeeper,
 			KvGasConfig:          storetypes.KVGasConfig(),
 			TransientKVGasConfig: storetypes.TransientGasConfig(),
-			ApprovalExpiration:   cmn.DefaultExpirationDuration, // should be configurable in the future.
 		},
+		bankKeeper:     bankKeeper,
 		transferKeeper: transferKeeper,
 		channelKeeper:  channelKeeper,
 		stakingKeeper:  stakingKeeper,
@@ -90,38 +92,38 @@ func (p Precompile) RequiredGas(input []byte) uint64 {
 
 // Run executes the precompiled contract IBC transfer methods defined in the ABI.
 func (p Precompile) Run(evm *vm.EVM, contract *vm.Contract, readOnly bool) (bz []byte, err error) {
-	ctx, stateDB, snapshot, method, initialGas, args, err := p.RunSetup(evm, contract, readOnly, p.IsTransaction)
+	bz, err = p.run(evm, contract, readOnly)
+	if err != nil {
+		return cmn.ReturnRevertError(evm, err)
+	}
+
+	return bz, nil
+}
+
+func (p Precompile) run(evm *vm.EVM, contract *vm.Contract, readOnly bool) (bz []byte, err error) {
+	ctx, stateDB, method, initialGas, args, err := p.RunSetup(evm, contract, readOnly, p.IsTransaction)
 	if err != nil {
 		return nil, err
 	}
+
+	// Start the balance change handler before executing the precompile.
+	p.GetBalanceHandler().BeforeBalanceChange(ctx)
 
 	// This handles any out of gas errors that may occur during the execution of a precompile tx or query.
 	// It avoids panics and returns the out of gas error so the EVM can continue gracefully.
 	defer cmn.HandleGasError(ctx, contract, initialGas, &err)()
 
 	switch method.Name {
-	// TODO Approval transactions => need cosmos-sdk v0.46 & ibc-go v6.2.0
-	// Authorization Methods:
-	case authorization.ApproveMethod:
-		bz, err = p.Approve(ctx, evm.Origin, stateDB, method, args)
-	case authorization.RevokeMethod:
-		bz, err = p.Revoke(ctx, evm.Origin, stateDB, method, args)
-	case authorization.IncreaseAllowanceMethod:
-		bz, err = p.IncreaseAllowance(ctx, evm.Origin, stateDB, method, args)
-	case authorization.DecreaseAllowanceMethod:
-		bz, err = p.DecreaseAllowance(ctx, evm.Origin, stateDB, method, args)
 	// ICS20 transactions
 	case TransferMethod:
-		bz, err = p.Transfer(ctx, evm.Origin, contract, stateDB, method, args)
+		bz, err = p.Transfer(ctx, contract, stateDB, method, args)
 	// ICS20 queries
-	case DenomTraceMethod:
-		bz, err = p.DenomTrace(ctx, contract, method, args)
-	case DenomTracesMethod:
-		bz, err = p.DenomTraces(ctx, contract, method, args)
+	case DenomMethod:
+		bz, err = p.Denom(ctx, contract, method, args)
+	case DenomsMethod:
+		bz, err = p.Denoms(ctx, contract, method, args)
 	case DenomHashMethod:
 		bz, err = p.DenomHash(ctx, contract, method, args)
-	case authorization.AllowanceMethod:
-		bz, err = p.Allowance(ctx, method, args)
 	default:
 		return nil, fmt.Errorf(cmn.ErrUnknownMethod, method.Name)
 	}
@@ -132,11 +134,12 @@ func (p Precompile) Run(evm *vm.EVM, contract *vm.Contract, readOnly bool) (bz [
 
 	cost := ctx.GasMeter().GasConsumed() - initialGas
 
-	if !contract.UseGas(cost) {
+	if !contract.UseGas(cost, nil, tracing.GasChangeCallPrecompiledContract) {
 		return nil, vm.ErrOutOfGas
 	}
 
-	if err := p.AddJournalEntries(stateDB, snapshot); err != nil {
+	// Process the native balance changes after the method execution.
+	if err = p.GetBalanceHandler().AfterBalanceChange(ctx, stateDB); err != nil {
 		return nil, err
 	}
 
@@ -147,19 +150,9 @@ func (p Precompile) Run(evm *vm.EVM, contract *vm.Contract, readOnly bool) (bz [
 //
 // Available ics20 transactions are:
 //   - Transfer
-//
-// Available authorization transactions are:
-//   - Approve
-//   - Revoke
-//   - IncreaseAllowance
-//   - DecreaseAllowance
 func (Precompile) IsTransaction(method *abi.Method) bool {
 	switch method.Name {
-	case TransferMethod,
-		authorization.ApproveMethod,
-		authorization.RevokeMethod,
-		authorization.IncreaseAllowanceMethod,
-		authorization.DecreaseAllowanceMethod:
+	case TransferMethod:
 		return true
 	default:
 		return false

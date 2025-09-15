@@ -3,13 +3,17 @@ package evm
 import (
 	"math/big"
 
-	errorsmod "cosmossdk.io/errors"
-	sdktypes "github.com/cosmos/cosmos-sdk/types"
-	errortypes "github.com/cosmos/cosmos-sdk/types/errors"
+	"github.com/ethereum/go-ethereum/common"
+	ethtypes "github.com/ethereum/go-ethereum/core/types"
+
 	anteinterfaces "github.com/cosmos/evm/ante/interfaces"
 	"github.com/cosmos/evm/types"
 	evmtypes "github.com/cosmos/evm/x/vm/types"
-	"github.com/ethereum/go-ethereum/common"
+
+	errorsmod "cosmossdk.io/errors"
+
+	sdktypes "github.com/cosmos/cosmos-sdk/types"
+	errortypes "github.com/cosmos/cosmos-sdk/types/errors"
 )
 
 // UpdateCumulativeGasWanted updates the cumulative gas wanted
@@ -81,11 +85,11 @@ func deductFees(
 
 // GetMsgPriority returns the priority of an Eth Tx capped by the minimum priority
 func GetMsgPriority(
-	txData evmtypes.TxData,
+	ethTx *ethtypes.Transaction,
 	minPriority int64,
 	baseFee *big.Int,
 ) int64 {
-	priority := evmtypes.GetTxPriority(txData, baseFee)
+	priority := evmtypes.GetTxPriority(ethTx, baseFee)
 
 	if priority < minPriority {
 		minPriority = priority

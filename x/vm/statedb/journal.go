@@ -18,12 +18,12 @@ package statedb
 
 import (
 	"bytes"
-	"math/big"
 	"sort"
 
-	storetypes "cosmossdk.io/store/types"
-	sdk "github.com/cosmos/cosmos-sdk/types"
 	"github.com/ethereum/go-ethereum/common"
+	"github.com/holiman/uint256"
+
+	sdk "github.com/cosmos/cosmos-sdk/types"
 )
 
 // JournalEntry is a modification entry in the state change journal that can be
@@ -101,22 +101,26 @@ type (
 	resetObjectChange struct {
 		prev *stateObject
 	}
-	suicideChange struct {
+	selfDestructChange struct {
 		account     *common.Address
-		prev        bool // whether account had already suicided
-		prevbalance *big.Int
+		prev        bool // whether account had already self-destructed
+		prevbalance *uint256.Int
 	}
 
 	// Changes to individual accounts.
 	balanceChange struct {
 		account *common.Address
-		prev    *big.Int
+		prev    *uint256.Int
 	}
 	nonceChange struct {
 		account *common.Address
 		prev    uint64
 	}
 	storageChange struct {
+		account       *common.Address
+		key, prevalue common.Hash
+	}
+	transientStorageChange struct {
 		account       *common.Address
 		key, prevalue common.Hash
 	}
@@ -140,18 +144,23 @@ type (
 		slot    *common.Hash
 	}
 	precompileCallChange struct {
-		multiStore storetypes.CacheMultiStore
-		events     sdk.Events
+		snapshot int
+		events   sdk.Events
+	}
+	createContractChange struct {
+		account *common.Address
 	}
 )
 
 var (
+	_ JournalEntry = createContractChange{}
 	_ JournalEntry = createObjectChange{}
 	_ JournalEntry = resetObjectChange{}
-	_ JournalEntry = suicideChange{}
+	_ JournalEntry = selfDestructChange{}
 	_ JournalEntry = balanceChange{}
 	_ JournalEntry = nonceChange{}
 	_ JournalEntry = storageChange{}
+	_ JournalEntry = transientStorageChange{}
 	_ JournalEntry = codeChange{}
 	_ JournalEntry = refundChange{}
 	_ JournalEntry = addLogChange{}
@@ -160,16 +169,18 @@ var (
 	_ JournalEntry = precompileCallChange{}
 )
 
+func (ch createContractChange) Revert(s *StateDB) {
+	s.getStateObject(*ch.account).newContract = false
+}
+
+func (ch createContractChange) Dirtied() *common.Address {
+	return nil
+}
+
 func (pc precompileCallChange) Revert(s *StateDB) {
 	// rollback multi store from cache ctx to the previous
 	// state stored in the snapshot
-	s.cacheCtx = s.cacheCtx.WithMultiStore(pc.multiStore)
-	s.writeCache = func() {
-		// rollback the events to the ones snapshot
-		// on the snapshot
-		s.ctx.EventManager().EmitEvents(pc.events)
-		pc.multiStore.Write()
-	}
+	s.RevertMultiStore(pc.snapshot, pc.events)
 }
 
 func (pc precompileCallChange) Dirtied() *common.Address {
@@ -192,15 +203,15 @@ func (ch resetObjectChange) Dirtied() *common.Address {
 	return nil
 }
 
-func (ch suicideChange) Revert(s *StateDB) {
+func (ch selfDestructChange) Revert(s *StateDB) {
 	obj := s.getStateObject(*ch.account)
 	if obj != nil {
-		obj.suicided = ch.prev
+		obj.selfDestructed = ch.prev
 		obj.setBalance(ch.prevbalance)
 	}
 }
 
-func (ch suicideChange) Dirtied() *common.Address {
+func (ch selfDestructChange) Dirtied() *common.Address {
 	return ch.account
 }
 
@@ -234,6 +245,14 @@ func (ch storageChange) Revert(s *StateDB) {
 
 func (ch storageChange) Dirtied() *common.Address {
 	return ch.account
+}
+
+func (ch transientStorageChange) Revert(s *StateDB) {
+	s.setTransientState(*ch.account, ch.key, ch.prevalue)
+}
+
+func (ch transientStorageChange) Dirtied() *common.Address {
+	return nil
 }
 
 func (ch refundChange) Revert(s *StateDB) {

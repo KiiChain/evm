@@ -4,30 +4,31 @@ import (
 	"errors"
 	"math/big"
 
+	ethtypes "github.com/ethereum/go-ethereum/core/types"
+
+	anteinterfaces "github.com/cosmos/evm/ante/interfaces"
+	evmtypes "github.com/cosmos/evm/x/vm/types"
+
 	errorsmod "cosmossdk.io/errors"
 	sdkmath "cosmossdk.io/math"
+
 	sdktypes "github.com/cosmos/cosmos-sdk/types"
 	errortypes "github.com/cosmos/cosmos-sdk/types/errors"
 	"github.com/cosmos/cosmos-sdk/types/tx"
-	anteinterfaces "github.com/cosmos/evm/ante/interfaces"
-	evmtypes "github.com/cosmos/evm/x/vm/types"
 )
 
 // ValidateMsg validates an Ethereum specific message type and returns an error
 // if invalid. It checks the following requirements:
-// - nil MUST be passed as the from address
 // - If the transaction is a contract creation or call, the corresponding operation must be enabled in the EVM parameters
 func ValidateMsg(
 	evmParams evmtypes.Params,
-	txData evmtypes.TxData,
-	from sdktypes.AccAddress,
+	ethTx *ethtypes.Transaction,
 ) error {
-	if from != nil {
-		return errorsmod.Wrapf(errortypes.ErrInvalidRequest, "invalid from address; expected nil; got: %q", from.String())
+	if ethTx == nil {
+		return errorsmod.Wrap(errortypes.ErrInvalidRequest, "transaction is nil")
 	}
-
 	return checkDisabledCreateCall(
-		txData,
+		ethTx,
 		&evmParams.AccessControl,
 	)
 }
@@ -35,10 +36,10 @@ func ValidateMsg(
 // checkDisabledCreateCall checks if the transaction is a contract creation or call,
 // and if those actions are disabled through governance.
 func checkDisabledCreateCall(
-	txData evmtypes.TxData,
+	ethTx *ethtypes.Transaction,
 	permissions *evmtypes.AccessControl,
 ) error {
-	to := txData.GetTo()
+	to := ethTx.To()
 	blockCreate := permissions.Create.AccessType == evmtypes.AccessTypeRestricted
 	blockCall := permissions.Call.AccessType == evmtypes.AccessTypeRestricted
 
@@ -108,11 +109,13 @@ func CheckTxFee(txFeeInfo *tx.Fee, txFee *big.Int, txGasLimit uint64) error {
 		return nil
 	}
 
-	convertedAmount := sdkmath.NewIntFromBigInt(evmtypes.ConvertAmountFrom18DecimalsBigInt(txFee))
-
-	baseDenom := evmtypes.GetEVMCoinDenom()
-	if !txFeeInfo.Amount.AmountOf(baseDenom).Equal(convertedAmount) {
-		return errorsmod.Wrapf(errortypes.ErrInvalidRequest, "invalid AuthInfo Fee Amount (%s != %s)", txFeeInfo.Amount, convertedAmount)
+	// NOTE: When an evm tx comes in, it goes through the process of converting it
+	// to MsgEthereumTx, which is a sdk tx. Here, the denom will be a uatom, not aatom.
+	// BuildTx then converts uatom to aatom meaning that logic that interacts with the user
+	// will use uatom and internal processing such as the ante handler will operate based on aatom.
+	evmExtendedDenom := evmtypes.GetEVMCoinExtendedDenom()
+	if !txFeeInfo.Amount.AmountOf(evmExtendedDenom).Equal(sdkmath.NewIntFromBigInt(txFee)) {
+		return errorsmod.Wrapf(errortypes.ErrInvalidRequest, "invalid AuthInfo Fee Amount (%s != %s)", txFeeInfo.Amount, txFee)
 	}
 
 	if txFeeInfo.GasLimit != txGasLimit {

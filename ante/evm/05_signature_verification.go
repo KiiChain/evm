@@ -3,12 +3,15 @@ package evm
 import (
 	"math/big"
 
-	errorsmod "cosmossdk.io/errors"
-	sdk "github.com/cosmos/cosmos-sdk/types"
-	errortypes "github.com/cosmos/cosmos-sdk/types/errors"
+	ethtypes "github.com/ethereum/go-ethereum/core/types"
+
 	anteinterfaces "github.com/cosmos/evm/ante/interfaces"
 	evmtypes "github.com/cosmos/evm/x/vm/types"
-	ethtypes "github.com/ethereum/go-ethereum/core/types"
+
+	errorsmod "cosmossdk.io/errors"
+
+	sdk "github.com/cosmos/cosmos-sdk/types"
+	errortypes "github.com/cosmos/cosmos-sdk/types/errors"
 )
 
 // EthSigVerificationDecorator validates an ethereum signatures
@@ -32,7 +35,7 @@ func (esvd EthSigVerificationDecorator) AnteHandle(ctx sdk.Context, tx sdk.Tx, s
 	evmParams := esvd.evmKeeper.GetParams(ctx)
 	ethCfg := evmtypes.GetEthChainConfig()
 	blockNum := big.NewInt(ctx.BlockHeight())
-	signer := ethtypes.MakeSigner(ethCfg, blockNum)
+	signer := ethtypes.MakeSigner(ethCfg, blockNum, uint64(ctx.BlockTime().Unix())) //#nosec G115 -- int overflow is not a concern here
 	allowUnprotectedTxs := evmParams.GetAllowUnprotectedTxs()
 
 	msgs := tx.GetMsgs()
@@ -65,23 +68,24 @@ func SignatureVerification(
 	allowUnprotectedTxs bool,
 ) error {
 	ethTx := msg.AsTransaction()
+	ethCfg := evmtypes.GetEthChainConfig()
 
-	if !allowUnprotectedTxs && !ethTx.Protected() {
-		return errorsmod.Wrapf(
-			errortypes.ErrNotSupported,
-			"rejected unprotected ethereum transaction; please sign your transaction according to EIP-155 to protect it against replay-attacks")
+	if !allowUnprotectedTxs {
+		if !ethTx.Protected() {
+			return errorsmod.Wrapf(
+				errortypes.ErrNotSupported,
+				"rejected unprotected ethereum transaction; please sign your transaction according to EIP-155 to protect it against replay-attacks")
+		}
+		if ethTx.ChainId().Uint64() != ethCfg.ChainID.Uint64() {
+			return errorsmod.Wrapf(
+				errortypes.ErrInvalidChainID,
+				"rejected ethereum transaction with incorrect chain-id; expected %d, got %d", ethCfg.ChainID, ethTx.ChainId())
+		}
 	}
 
-	sender, err := signer.Sender(ethTx)
-	if err != nil {
-		return errorsmod.Wrapf(
-			errortypes.ErrorInvalidSigner,
-			"couldn't retrieve sender address from the ethereum transaction: %s",
-			err.Error(),
-		)
+	if err := msg.VerifySender(signer); err != nil {
+		return errorsmod.Wrapf(errortypes.ErrorInvalidSigner, "signature verification failed: %s", err.Error())
 	}
 
-	// set up the sender to the transaction field if not already
-	msg.From = sender.Hex()
 	return nil
 }

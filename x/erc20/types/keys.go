@@ -1,8 +1,9 @@
 package types
 
 import (
-	authtypes "github.com/cosmos/cosmos-sdk/x/auth/types"
 	"github.com/ethereum/go-ethereum/common"
+
+	authtypes "github.com/cosmos/cosmos-sdk/x/auth/types"
 )
 
 // constants
@@ -30,12 +31,26 @@ const (
 	prefixTokenPairByERC20
 	prefixTokenPairByDenom
 	prefixSTRv2Addresses
+	prefixAllowance
+	prefixNativePrecompiles
+	prefixDynamicPrecompiles
 )
 
 // KVStore key prefixes
 var (
-	KeyPrefixTokenPair        = []byte{prefixTokenPair}
-	KeyPrefixTokenPairByERC20 = []byte{prefixTokenPairByERC20}
-	KeyPrefixTokenPairByDenom = []byte{prefixTokenPairByDenom}
-	KeyPrefixSTRv2Addresses   = []byte{prefixSTRv2Addresses}
+	KeyPrefixTokenPair          = []byte{prefixTokenPair}
+	KeyPrefixTokenPairByERC20   = []byte{prefixTokenPairByERC20}
+	KeyPrefixTokenPairByDenom   = []byte{prefixTokenPairByDenom}
+	KeyPrefixSTRv2Addresses     = []byte{prefixSTRv2Addresses}
+	KeyPrefixAllowance          = []byte{prefixAllowance}
+	KeyPrefixNativePrecompiles  = []byte{prefixNativePrecompiles}
+	KeyPrefixDynamicPrecompiles = []byte{prefixDynamicPrecompiles}
 )
+
+func AllowanceKey(
+	erc20 common.Address,
+	owner common.Address,
+	spender common.Address,
+) []byte {
+	return append(append(erc20.Bytes(), owner.Bytes()...), spender.Bytes()...)
+}

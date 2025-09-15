@@ -6,29 +6,35 @@ import (
 	"math/big"
 	"time"
 
-	tmrpcclient "github.com/cometbft/cometbft/rpc/client"
-
-	"cosmossdk.io/log"
-	tmrpctypes "github.com/cometbft/cometbft/rpc/core/types"
-	"github.com/cosmos/cosmos-sdk/client"
-	"github.com/cosmos/cosmos-sdk/crypto/keyring"
-	"github.com/cosmos/cosmos-sdk/server"
-	sdk "github.com/cosmos/cosmos-sdk/types"
-	rpctypes "github.com/cosmos/evm/rpc/types"
-	"github.com/cosmos/evm/server/config"
-	cosmosevmtypes "github.com/cosmos/evm/types"
-	evmtypes "github.com/cosmos/evm/x/vm/types"
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/common/hexutil"
+	"github.com/ethereum/go-ethereum/common/math"
 	ethtypes "github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/params"
 	"github.com/ethereum/go-ethereum/rpc"
 	"github.com/ethereum/go-ethereum/signer/core/apitypes"
+
+	tmrpcclient "github.com/cometbft/cometbft/rpc/client"
+	tmrpctypes "github.com/cometbft/cometbft/rpc/core/types"
+
+	rpctypes "github.com/cosmos/evm/rpc/types"
+	"github.com/cosmos/evm/server/config"
+	cosmosevmtypes "github.com/cosmos/evm/types"
+	evmtypes "github.com/cosmos/evm/x/vm/types"
+
+	"cosmossdk.io/log"
+
+	"github.com/cosmos/cosmos-sdk/client"
+	"github.com/cosmos/cosmos-sdk/crypto/keyring"
+	"github.com/cosmos/cosmos-sdk/server"
+	sdk "github.com/cosmos/cosmos-sdk/types"
 )
 
 // BackendI implements the Cosmos and EVM backend.
 type BackendI interface { //nolint: revive
 	EVMBackend
+
+	GetConfig() config.Config
 }
 
 // EVMBackend implements the functionality shared within ethereum namespaces
@@ -60,17 +66,18 @@ type EVMBackend interface {
 	GetBlockByHash(hash common.Hash, fullTx bool) (map[string]interface{}, error)
 	GetBlockTransactionCountByHash(hash common.Hash) *hexutil.Uint
 	GetBlockTransactionCountByNumber(blockNum rpctypes.BlockNumber) *hexutil.Uint
-	TendermintBlockByNumber(blockNum rpctypes.BlockNumber) (*tmrpctypes.ResultBlock, error)
-	TendermintBlockByHash(blockHash common.Hash) (*tmrpctypes.ResultBlock, error)
-	BlockNumberFromTendermint(blockNrOrHash rpctypes.BlockNumberOrHash) (rpctypes.BlockNumber, error)
-	BlockNumberFromTendermintByHash(blockHash common.Hash) (*big.Int, error)
-	EthMsgsFromTendermintBlock(block *tmrpctypes.ResultBlock, blockRes *tmrpctypes.ResultBlockResults) []*evmtypes.MsgEthereumTx
+	CometBlockByNumber(blockNum rpctypes.BlockNumber) (*tmrpctypes.ResultBlock, error)
+	CometBlockByHash(blockHash common.Hash) (*tmrpctypes.ResultBlock, error)
+	BlockNumberFromComet(blockNrOrHash rpctypes.BlockNumberOrHash) (rpctypes.BlockNumber, error)
+	BlockNumberFromCometByHash(blockHash common.Hash) (*big.Int, error)
+	EthMsgsFromCometBlock(block *tmrpctypes.ResultBlock, blockRes *tmrpctypes.ResultBlockResults) []*evmtypes.MsgEthereumTx
 	BlockBloom(blockRes *tmrpctypes.ResultBlockResults) (ethtypes.Bloom, error)
 	HeaderByNumber(blockNum rpctypes.BlockNumber) (*ethtypes.Header, error)
 	HeaderByHash(blockHash common.Hash) (*ethtypes.Header, error)
-	RPCBlockFromTendermintBlock(resBlock *tmrpctypes.ResultBlock, blockRes *tmrpctypes.ResultBlockResults, fullTx bool) (map[string]interface{}, error)
+	RPCBlockFromCometBlock(resBlock *tmrpctypes.ResultBlock, blockRes *tmrpctypes.ResultBlockResults, fullTx bool) (map[string]interface{}, error)
 	EthBlockByNumber(blockNum rpctypes.BlockNumber) (*ethtypes.Block, error)
-	EthBlockFromTendermintBlock(resBlock *tmrpctypes.ResultBlock, blockRes *tmrpctypes.ResultBlockResults) (*ethtypes.Block, error)
+	EthBlockFromCometBlock(resBlock *tmrpctypes.ResultBlock, blockRes *tmrpctypes.ResultBlockResults) (*ethtypes.Block, error)
+	GetBlockReceipts(blockNrOrHash rpctypes.BlockNumberOrHash) ([]map[string]interface{}, error)
 
 	// Account Info
 	GetCode(address common.Address, blockNrOrHash rpctypes.BlockNumberOrHash) (hexutil.Bytes, error)
@@ -87,7 +94,7 @@ type EVMBackend interface {
 	CurrentHeader() (*ethtypes.Header, error)
 	PendingTransactions() ([]*sdk.Tx, error)
 	GetCoinbase() (sdk.AccAddress, error)
-	FeeHistory(blockCount rpc.DecimalOrHex, lastBlock rpc.BlockNumber, rewardPercentiles []float64) (*rpctypes.FeeHistoryResult, error)
+	FeeHistory(blockCount math.HexOrDecimal64, lastBlock rpc.BlockNumber, rewardPercentiles []float64) (*rpctypes.FeeHistoryResult, error)
 	SuggestGasTipCap(baseFee *big.Int) (*big.Int, error)
 
 	// Tx Info
@@ -113,24 +120,56 @@ type EVMBackend interface {
 	GetLogsByHeight(height *int64) ([][]*ethtypes.Log, error)
 	BloomStatus() (uint64, uint64)
 
+	// TxPool API
+	Content() (map[string]map[string]map[string]*rpctypes.RPCTransaction, error)
+	ContentFrom(address common.Address) (map[string]map[string]*rpctypes.RPCTransaction, error)
+	Inspect() (map[string]map[string]map[string]string, error)
+	Status() (map[string]hexutil.Uint, error)
+
 	// Tracing
-	TraceTransaction(hash common.Hash, config *evmtypes.TraceConfig) (interface{}, error)
-	TraceBlock(height rpctypes.BlockNumber, config *evmtypes.TraceConfig, block *tmrpctypes.ResultBlock) ([]*evmtypes.TxTraceResult, error)
+	TraceTransaction(hash common.Hash, config *rpctypes.TraceConfig) (interface{}, error)
+	TraceBlock(height rpctypes.BlockNumber, config *rpctypes.TraceConfig, block *tmrpctypes.ResultBlock) ([]*evmtypes.TxTraceResult, error)
 }
 
 var _ BackendI = (*Backend)(nil)
 
+// ProcessBlocker is a function type that processes a block and its associated data
+// for fee history calculation. It takes a Tendermint block, its corresponding
+// Ethereum block representation, reward percentiles for fee estimation,
+// block results, and a target fee history entry to populate.
+//
+// Parameters:
+//   - tendermintBlock: The raw Tendermint block data
+//   - ethBlock: The Ethereum-formatted block representation
+//   - rewardPercentiles: Percentiles used for fee reward calculation
+//   - tendermintBlockResult: Block execution results from Tendermint
+//   - targetOneFeeHistory: The fee history entry to be populated
+//
+// Returns an error if block processing fails.
+type ProcessBlocker func(
+	tendermintBlock *tmrpctypes.ResultBlock,
+	ethBlock *map[string]interface{},
+	rewardPercentiles []float64,
+	tendermintBlockResult *tmrpctypes.ResultBlockResults,
+	targetOneFeeHistory *rpctypes.OneFeeHistory,
+) error
+
 // Backend implements the BackendI interface
 type Backend struct {
-	ctx                 context.Context
-	clientCtx           client.Context
-	rpcClient           tmrpcclient.SignClient
-	queryClient         *rpctypes.QueryClient // gRPC query client
-	logger              log.Logger
-	chainID             *big.Int
-	cfg                 config.Config
-	allowUnprotectedTxs bool
-	indexer             cosmosevmtypes.EVMTxIndexer
+	Ctx                 context.Context
+	ClientCtx           client.Context
+	RPCClient           tmrpcclient.SignClient
+	QueryClient         *rpctypes.QueryClient // gRPC query client
+	Logger              log.Logger
+	EvmChainID          *big.Int
+	Cfg                 config.Config
+	AllowUnprotectedTxs bool
+	Indexer             cosmosevmtypes.EVMTxIndexer
+	ProcessBlocker      ProcessBlocker
+}
+
+func (b *Backend) GetConfig() config.Config {
+	return b.Cfg
 }
 
 // NewBackend creates a new Backend instance for cosmos and ethereum namespaces
@@ -141,11 +180,6 @@ func NewBackend(
 	allowUnprotectedTxs bool,
 	indexer cosmosevmtypes.EVMTxIndexer,
 ) *Backend {
-	chainID, err := cosmosevmtypes.ParseChainID(clientCtx.ChainID)
-	if err != nil {
-		panic(err)
-	}
-
 	appConf, err := config.GetConfig(ctx.Viper)
 	if err != nil {
 		panic(err)
@@ -156,15 +190,17 @@ func NewBackend(
 		panic(fmt.Sprintf("invalid rpc client, expected: tmrpcclient.SignClient, got: %T", clientCtx.Client))
 	}
 
-	return &Backend{
-		ctx:                 context.Background(),
-		clientCtx:           clientCtx,
-		rpcClient:           rpcClient,
-		queryClient:         rpctypes.NewQueryClient(clientCtx),
-		logger:              logger.With("module", "backend"),
-		chainID:             chainID,
-		cfg:                 appConf,
-		allowUnprotectedTxs: allowUnprotectedTxs,
-		indexer:             indexer,
+	b := &Backend{
+		Ctx:                 context.Background(),
+		ClientCtx:           clientCtx,
+		RPCClient:           rpcClient,
+		QueryClient:         rpctypes.NewQueryClient(clientCtx),
+		Logger:              logger.With("module", "backend"),
+		EvmChainID:          big.NewInt(int64(appConf.EVM.EVMChainID)), //nolint:gosec // G115 // won't exceed uint64
+		Cfg:                 appConf,
+		AllowUnprotectedTxs: allowUnprotectedTxs,
+		Indexer:             indexer,
 	}
+	b.ProcessBlocker = b.ProcessBlock
+	return b
 }

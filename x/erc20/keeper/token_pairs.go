@@ -1,30 +1,46 @@
 package keeper
 
 import (
+	"github.com/ethereum/go-ethereum/common"
+
+	"github.com/cosmos/evm/utils"
+	"github.com/cosmos/evm/x/erc20/types"
+
 	errorsmod "cosmossdk.io/errors"
 	"cosmossdk.io/store/prefix"
 	storetypes "cosmossdk.io/store/types"
+
 	sdk "github.com/cosmos/cosmos-sdk/types"
-	"github.com/cosmos/evm/utils"
-	"github.com/cosmos/evm/x/erc20/types"
-	"github.com/ethereum/go-ethereum/common"
 )
 
 // CreateNewTokenPair creates a new token pair and stores it in the state.
-func (k *Keeper) CreateNewTokenPair(ctx sdk.Context, denom string) (types.TokenPair, error) {
+func (k Keeper) CreateNewTokenPair(ctx sdk.Context, denom string) (types.TokenPair, error) {
 	pair, err := types.NewTokenPairSTRv2(denom)
 	if err != nil {
 		return types.TokenPair{}, err
 	}
-	k.SetToken(ctx, pair)
+	if account := k.evmKeeper.GetAccount(ctx, pair.GetERC20Contract()); account != nil && account.IsContract() {
+		return types.TokenPair{}, errorsmod.Wrapf(types.ErrTokenPairAlreadyExists, "token already exists for token %s", pair.Erc20Address)
+	}
+	err = k.SetToken(ctx, pair)
+	if err != nil {
+		return types.TokenPair{}, err
+	}
 	return pair, nil
 }
 
 // SetToken stores a token pair, denom map and erc20 map.
-func (k *Keeper) SetToken(ctx sdk.Context, pair types.TokenPair) {
+func (k *Keeper) SetToken(ctx sdk.Context, pair types.TokenPair) error {
+	if k.IsDenomRegistered(ctx, pair.Denom) {
+		return errorsmod.Wrapf(types.ErrTokenPairAlreadyExists, "token already exists for denom %s", pair.Denom)
+	}
+	if k.IsERC20Registered(ctx, pair.GetERC20Contract()) {
+		return errorsmod.Wrapf(types.ErrTokenPairAlreadyExists, "token already exists for token %s", pair.Erc20Address)
+	}
 	k.SetTokenPair(ctx, pair)
 	k.SetDenomMap(ctx, pair.Denom, pair.GetID())
 	k.SetERC20Map(ctx, pair.GetERC20Contract(), pair.GetID())
+	return nil
 }
 
 // GetTokenPairs gets all registered token tokenPairs.
@@ -96,6 +112,7 @@ func (k Keeper) DeleteTokenPair(ctx sdk.Context, tokenPair types.TokenPair) {
 	k.deleteTokenPair(ctx, id)
 	k.deleteERC20Map(ctx, tokenPair.GetERC20Contract())
 	k.deleteDenomMap(ctx, tokenPair.Denom)
+	k.deleteAllowances(ctx, tokenPair.GetERC20Contract())
 }
 
 // deleteTokenPair deletes the token pair for the given id.
@@ -161,7 +178,7 @@ func (k Keeper) IsDenomRegistered(ctx sdk.Context, denom string) bool {
 // GetCoinAddress returns the corresponding ERC-20 contract address for the
 // given denom.
 // If the denom is not registered and its an IBC voucher, it returns the address
-// from the hash of the ICS20's DenomTrace Path.
+// from the hash of the ICS20's Denom Path.
 func (k Keeper) GetCoinAddress(ctx sdk.Context, denom string) (common.Address, error) {
 	id := k.GetDenomMap(ctx, denom)
 	if len(id) == 0 {

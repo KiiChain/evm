@@ -1,10 +1,11 @@
 package gov
 
 import (
+	"github.com/ethereum/go-ethereum/accounts/abi"
+	"github.com/ethereum/go-ethereum/core/vm"
+
 	sdk "github.com/cosmos/cosmos-sdk/types"
 	govkeeper "github.com/cosmos/cosmos-sdk/x/gov/keeper"
-	"github.com/cosmos/evm/x/vm/core/vm"
-	"github.com/ethereum/go-ethereum/accounts/abi"
 )
 
 const (
@@ -24,6 +25,8 @@ const (
 	GetProposalsMethod = "getProposals"
 	// GetParamsMethod defines the method name for the get params precompile request.
 	GetParamsMethod = "getParams"
+	// GetConstitutionMethod defines the method name for the get constitution precompile request.
+	GetConstitutionMethod = "getConstitution"
 )
 
 // GetVotes implements the query logic for getting votes for a proposal.
@@ -44,7 +47,10 @@ func (p *Precompile) GetVotes(
 		return nil, err
 	}
 
-	output := new(VotesOutput).FromResponse(res)
+	output, err := new(VotesOutput).FromResponse(res)
+	if err != nil {
+		return nil, err
+	}
 	return method.Outputs.Pack(output.Votes, output.PageResponse)
 }
 
@@ -55,7 +61,7 @@ func (p *Precompile) GetVote(
 	_ *vm.Contract,
 	args []interface{},
 ) ([]byte, error) {
-	queryVotesReq, err := ParseVoteArgs(args)
+	queryVotesReq, err := ParseVoteArgs(args, p.addrCdc)
 	if err != nil {
 		return nil, err
 	}
@@ -66,8 +72,10 @@ func (p *Precompile) GetVote(
 		return nil, err
 	}
 
-	output := new(VoteOutput).FromResponse(res)
-
+	output, err := new(VoteOutput).FromResponse(res)
+	if err != nil {
+		return nil, err
+	}
 	return method.Outputs.Pack(output.Vote)
 }
 
@@ -78,7 +86,7 @@ func (p *Precompile) GetDeposit(
 	_ *vm.Contract,
 	args []interface{},
 ) ([]byte, error) {
-	queryDepositReq, err := ParseDepositArgs(args)
+	queryDepositReq, err := ParseDepositArgs(args, p.addrCdc)
 	if err != nil {
 		return nil, err
 	}
@@ -89,7 +97,10 @@ func (p *Precompile) GetDeposit(
 		return nil, err
 	}
 
-	output := new(DepositOutput).FromResponse(res)
+	output, err := new(DepositOutput).FromResponse(res)
+	if err != nil {
+		return nil, err
+	}
 	return method.Outputs.Pack(output.Deposit)
 }
 
@@ -111,7 +122,10 @@ func (p *Precompile) GetDeposits(
 		return nil, err
 	}
 
-	output := new(DepositsOutput).FromResponse(res)
+	output, err := new(DepositsOutput).FromResponse(res)
+	if err != nil {
+		return nil, err
+	}
 	return method.Outputs.Pack(output.Deposits, output.PageResponse)
 }
 
@@ -155,7 +169,10 @@ func (p *Precompile) GetProposal(
 		return nil, err
 	}
 
-	output := new(ProposalOutput).FromResponse(res)
+	output, err := new(ProposalOutput).FromResponse(res)
+	if err != nil {
+		return nil, err
+	}
 	return method.Outputs.Pack(output.Proposal)
 }
 
@@ -166,7 +183,7 @@ func (p *Precompile) GetProposals(
 	_ *vm.Contract,
 	args []interface{},
 ) ([]byte, error) {
-	queryProposalsReq, err := ParseProposalsArgs(method, args)
+	queryProposalsReq, err := ParseProposalsArgs(method, args, p.addrCdc)
 	if err != nil {
 		return nil, err
 	}
@@ -177,8 +194,10 @@ func (p *Precompile) GetProposals(
 		return nil, err
 	}
 
-	output := new(ProposalsOutput).FromResponse(res)
-
+	output, err := new(ProposalsOutput).FromResponse(res)
+	if err != nil {
+		return nil, err
+	}
 	return method.Outputs.Pack(output.Proposals, output.PageResponse)
 }
 
@@ -202,4 +221,24 @@ func (p *Precompile) GetParams(
 
 	output := new(ParamsOutput).FromResponse(res)
 	return method.Outputs.Pack(output)
+}
+
+// GetConstitution implements the query logic for getting the constitution
+func (p *Precompile) GetConstitution(
+	ctx sdk.Context,
+	method *abi.Method,
+	_ *vm.Contract,
+	args []interface{},
+) ([]byte, error) {
+	req, err := BuildQueryConstitutionRequest(args)
+	if err != nil {
+		return nil, err
+	}
+
+	res, err := govkeeper.NewQueryServer(&p.govKeeper).Constitution(ctx, req)
+	if err != nil {
+		return nil, err
+	}
+
+	return method.Outputs.Pack(res.Constitution)
 }

@@ -1,17 +1,114 @@
 #!/usr/bin/make -f
 
-PACKAGES_NOSIMULATION=$(shell go list ./... | grep -v '/simulation')
+###############################################################################
+###                           Module & Versioning                           ###
+###############################################################################
+
 VERSION ?= $(shell echo $(shell git describe --tags --always) | sed 's/^v//')
+TMVERSION := $(shell go list -m github.com/cometbft/cometbft | sed 's:.* ::')
+COMMIT := $(shell git log -1 --format='%H')
+
+###############################################################################
+###                          Directories & Binaries                         ###
+###############################################################################
+
+BINDIR ?= $(GOPATH)/bin
 BUILDDIR ?= $(CURDIR)/build
+EXAMPLE_BINARY := evmd
+
+###############################################################################
+###                              Repo Info                                  ###
+###############################################################################
+
 HTTPS_GIT := https://github.com/cosmos/evm.git
 DOCKER := $(shell which docker)
 
 export GO111MODULE = on
 
-# Default target executed when no arguments are given to make.
-default_target: all
+###############################################################################
+###                            Submodule Settings                           ###
+###############################################################################
 
-.PHONY: build, default_target
+# evmd is a separate module under ./evmd
+EVMD_DIR      := evmd
+EVMD_MAIN_PKG := ./cmd/evmd
+
+###############################################################################
+###                        Build & Install evmd                             ###
+###############################################################################
+
+# process build tags
+build_tags = netgo
+
+ifeq (cleveldb,$(findstring cleveldb,$(COSMOS_BUILD_OPTIONS)))
+  build_tags += gcc
+endif
+build_tags += $(BUILD_TAGS)
+build_tags := $(strip $(build_tags))
+
+# process linker flags
+
+ldflags = -X github.com/cosmos/cosmos-sdk/version.Name=os \
+          -X github.com/cosmos/cosmos-sdk/version.AppName=$(EXAMPLE_BINARY) \
+          -X github.com/cosmos/cosmos-sdk/version.Version=$(VERSION) \
+          -X github.com/cosmos/cosmos-sdk/version.Commit=$(COMMIT) \
+          -X github.com/cometbft/cometbft/version.TMCoreSemVer=$(TMVERSION)
+
+# DB backend selection
+ifeq (cleveldb,$(findstring cleveldb,$(COSMOS_BUILD_OPTIONS)))
+  ldflags += -X github.com/cosmos/cosmos-sdk/types.DBBackend=cleveldb
+endif
+
+# add build tags to linker flags
+whitespace := $(subst ,, )
+comma := ,
+build_tags_comma_sep := $(subst $(whitespace),$(comma),$(build_tags))
+ldflags += -X "github.com/cosmos/cosmos-sdk/version.BuildTags=$(build_tags_comma_sep)"
+
+ifeq (,$(findstring nostrip,$(COSMOS_BUILD_OPTIONS)))
+  ldflags += -w -s
+endif
+ldflags += $(LDFLAGS)
+ldflags := $(strip $(ldflags))
+
+ifeq (staticlink,$(findstring staticlink,$(COSMOS_BUILD_OPTIONS)))
+  ldflags += -linkmode external -extldflags '-static'
+endif
+
+BUILD_FLAGS := -tags "$(build_tags)" -ldflags '$(ldflags)'
+# check for nostrip option
+ifeq (,$(findstring nostrip,$(COSMOS_BUILD_OPTIONS)))
+  BUILD_FLAGS += -trimpath
+endif
+
+# check if no optimization option is passed
+# used for remote debugging
+ifneq (,$(findstring nooptimization,$(COSMOS_BUILD_OPTIONS)))
+  BUILD_FLAGS += -gcflags "all=-N -l"
+endif
+
+# Build into $(BUILDDIR)
+build: go.sum $(BUILDDIR)/
+	@echo "🏗️  Building evmd to $(BUILDDIR)/$(EXAMPLE_BINARY) ..."
+	@cd $(EVMD_DIR) && CGO_ENABLED="1" \
+	  go build $(BUILD_FLAGS) -o $(BUILDDIR)/$(EXAMPLE_BINARY) $(EVMD_MAIN_PKG)
+
+# Cross-compile for Linux AMD64
+build-linux:
+	GOOS=linux GOARCH=amd64 $(MAKE) build
+
+# Install into $(BINDIR)
+install: go.sum
+	@echo "🚚  Installing evmd to $(BINDIR) ..."
+	@cd $(EVMD_DIR) && CGO_ENABLED="1" \
+	  go install $(BUILD_FLAGS) $(EVMD_MAIN_PKG)
+
+$(BUILDDIR)/:
+	mkdir -p $(BUILDDIR)/
+
+# Default & all target
+.PHONY: all build build-linux install
+all: build
 
 ###############################################################################
 ###                          Tools & Dependencies                           ###
@@ -30,34 +127,68 @@ vulncheck:
 ###                           Tests & Simulation                            ###
 ###############################################################################
 
-test: test-unit
-test-all: test-unit test-race
+PACKAGES_NOSIMULATION=$(shell go list ./... | grep -v '/simulation')
+PACKAGES_UNIT := $(shell go list ./... | grep -v '/tests/e2e$$' | grep -v '/simulation')
+PACKAGES_EVMD := $(shell cd evmd && go list ./... | grep -v '/simulation')
+COVERPKG_EVM  := $(shell go list ./... | grep -v '/tests/e2e$$' | grep -v '/simulation' | paste -sd, -)
+COVERPKG_ALL  := $(COVERPKG_EVM)
+COMMON_COVER_ARGS := -timeout=15m -covermode=atomic
 
-# For unit tests we don't want to execute the upgrade tests in tests/e2e but
-# we want to include all unit tests in the subfolders (tests/e2e/*)
-PACKAGES_UNIT=$(shell go list ./... | grep -v '/tests/e2e$$')
-TEST_PACKAGES=./...
-TEST_TARGETS := test-unit test-unit-cover test-race
+TEST_PACKAGES := ./...
+TEST_TARGETS := test-unit test-evmd test-unit-cover test-race
 
-# Test runs-specific rules. To add a new test target, just add
-# a new rule, customise ARGS or TEST_PACKAGES ad libitum, and
-# append the new rule to the TEST_TARGETS list.
 test-unit: ARGS=-timeout=15m
 test-unit: TEST_PACKAGES=$(PACKAGES_UNIT)
+test-unit: run-tests
 
 test-race: ARGS=-race
-test-race: TEST_PACKAGES=$(PACKAGES_NOSIMULATION)
-$(TEST_TARGETS): run-tests
+test-race: TEST_PACKAGES=$(PACKAGES_UNIT)
+test-race: run-tests
+
+test-evmd: ARGS=-timeout=15m
+test-evmd:
+	@cd evmd && go test -tags=test -mod=readonly $(ARGS) $(EXTRA_ARGS) $(PACKAGES_EVMD)
 
 test-unit-cover: ARGS=-timeout=15m -coverprofile=coverage.txt -covermode=atomic
 test-unit-cover: TEST_PACKAGES=$(PACKAGES_UNIT)
+test-unit-cover: run-tests
+	@echo "🔍 Running evm (root) coverage..."
+	@go test -tags=test $(COMMON_COVER_ARGS) -coverpkg=$(COVERPKG_ALL) -coverprofile=coverage.txt ./...
+	@echo "🔍 Running evmd coverage..."
+	@cd evmd && go test -tags=test $(COMMON_COVER_ARGS) -coverpkg=$(COVERPKG_ALL) -coverprofile=coverage_evmd.txt ./...
+	@echo "🔀 Merging evmd coverage into root coverage..."
+	@tail -n +2 evmd/coverage_evmd.txt >> coverage.txt && rm evmd/coverage_evmd.txt
+	@echo "🧹 Filtering ignored files from coverage.txt..."
+	@grep -v -E '/cmd/|/client/|/proto/|/testutil/|/mocks/|/test_.*\.go:|\.pb\.go:|\.pb\.gw\.go:|/x/[^/]+/module\.go:|/scripts/|/ibc/testing/|/version/|\.md:|\.pulsar\.go:' coverage.txt > tmp_coverage.txt && mv tmp_coverage.txt coverage.txt
+	@echo "📊 Coverage summary:"
+	@go tool cover -func=coverage.txt
+
+test: test-unit
+
+test-all:
+	@echo "🔍 Running evm module tests..."
+	@go test -tags=test -mod=readonly -timeout=15m $(PACKAGES_NOSIMULATION)
+	@echo "🔍 Running evmd module tests..."
+	@cd evmd && go test -tags=test -mod=readonly -timeout=15m $(PACKAGES_EVMD)
 
 run-tests:
 ifneq (,$(shell which tparse 2>/dev/null))
 	go test -tags=test -mod=readonly -json $(ARGS) $(EXTRA_ARGS) $(TEST_PACKAGES) | tparse
 else
-	go test -tags=test -mod=readonly $(ARGS)  $(EXTRA_ARGS) $(TEST_PACKAGES)
+	go test -tags=test -mod=readonly $(ARGS) $(EXTRA_ARGS) $(TEST_PACKAGES)
 endif
+
+# Use the old Apple linker to workaround broken xcode - https://github.com/golang/go/issues/65169
+ifeq ($(OS_FAMILY),Darwin)
+  FUZZLDFLAGS := -ldflags=-extldflags=-Wl,-ld_classic
+endif
+
+test-fuzz:
+	go test -tags=test $(FUZZLDFLAGS) -run NOTAREALTEST -v -fuzztime 10s -fuzz=FuzzMintCoins ./x/precisebank/keeper
+	go test -tags=test $(FUZZLDFLAGS) -run NOTAREALTEST -v -fuzztime 10s -fuzz=FuzzBurnCoins ./x/precisebank/keeper
+	go test -tags=test $(FUZZLDFLAGS) -run NOTAREALTEST -v -fuzztime 10s -fuzz=FuzzSendCoins ./x/precisebank/keeper
+	go test -tags=test $(FUZZLDFLAGS) -run NOTAREALTEST -v -fuzztime 10s -fuzz=FuzzGenesisStateValidate_NonZeroRemainder ./x/precisebank/types
+	go test -tags=test $(FUZZLDFLAGS) -run NOTAREALTEST -v -fuzztime 10s -fuzz=FuzzGenesisStateValidate_ZeroRemainder ./x/precisebank/types
 
 test-scripts:
 	@echo "Running scripts tests"
@@ -77,12 +208,15 @@ benchmark:
 ###############################################################################
 ###                                Linting                                  ###
 ###############################################################################
+golangci_lint_cmd=golangci-lint
+golangci_version=v2.2.2
 
 lint: lint-go lint-python lint-contracts
 
 lint-go:
-	gofumpt -l .
-	golangci-lint run --out-format=tab
+	@echo "--> Running linter"
+	@go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@$(golangci_version)
+	@$(golangci_lint_cmd) run --timeout=15m
 
 lint-python:
 	find . -name "*.py" -type f -not -path "*/node_modules/*" | xargs pylint
@@ -92,7 +226,8 @@ lint-contracts:
 	solhint contracts/**/*.sol
 
 lint-fix:
-	golangci-lint run --fix --out-format=tab --issues-exit-code=0
+	@go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@$(golangci_version)
+	@$(golangci_lint_cmd) run --timeout=15m --fix
 
 lint-fix-contracts:
 	solhint --fix contracts/**/*.sol
@@ -214,3 +349,37 @@ contracts-compile:
 contracts-add:
 	@echo "Adding a new smart contract to be compiled..."
 	@python3 ./scripts/compile_smart_contracts/compile_smart_contracts.py --add $(CONTRACT)
+
+###############################################################################
+###                                Localnet                                 ###
+###############################################################################
+
+localnet-build-env:
+	$(MAKE) -C contrib/images evmd-env
+
+localnet-build-nodes:
+	$(DOCKER) run --rm -v $(CURDIR)/.testnets:/data cosmos/evmd \
+			  testnet init-files --validator-count 4 -o /data --starting-ip-address 192.168.10.2 --keyring-backend=test --chain-id=local-4221 --use-docker=true
+	docker compose up -d
+
+localnet-stop:
+	docker compose down
+
+# localnet-start will run a 4-node testnet locally. The nodes are
+# based off the docker images in: ./contrib/images/simd-env
+localnet-start: localnet-stop localnet-build-env localnet-build-nodes
+
+
+.PHONY: localnet-start localnet-stop localnet-build-env localnet-build-nodes
+
+test-system: build
+	ulimit -n 1300
+	mkdir -p ./tests/systemtests/binaries/
+	cp $(BUILDDIR)/evmd ./tests/systemtests/binaries/
+	$(MAKE) -C tests/systemtests test
+
+mocks:
+	@echo "--> generating mocks"
+	@go get github.com/vektra/mockery/v2
+	@go generate ./...
+	@make format-go

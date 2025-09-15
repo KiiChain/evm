@@ -4,18 +4,21 @@ import (
 	"embed"
 	"fmt"
 
-	"cosmossdk.io/log"
-	storetypes "cosmossdk.io/store/types"
-	sdk "github.com/cosmos/cosmos-sdk/types"
-	authzkeeper "github.com/cosmos/cosmos-sdk/x/authz/keeper"
-	govkeeper "github.com/cosmos/cosmos-sdk/x/gov/keeper"
-
 	"github.com/ethereum/go-ethereum/accounts/abi"
 	"github.com/ethereum/go-ethereum/common"
+	"github.com/ethereum/go-ethereum/core/tracing"
+	"github.com/ethereum/go-ethereum/core/vm"
 
 	cmn "github.com/cosmos/evm/precompiles/common"
-	"github.com/cosmos/evm/x/vm/core/vm"
 	evmtypes "github.com/cosmos/evm/x/vm/types"
+
+	"cosmossdk.io/core/address"
+	"cosmossdk.io/log"
+	storetypes "cosmossdk.io/store/types"
+
+	"github.com/cosmos/cosmos-sdk/codec"
+	sdk "github.com/cosmos/cosmos-sdk/types"
+	govkeeper "github.com/cosmos/cosmos-sdk/x/gov/keeper"
 )
 
 var _ vm.PrecompiledContract = &Precompile{}
@@ -29,6 +32,8 @@ var f embed.FS
 type Precompile struct {
 	cmn.Precompile
 	govKeeper govkeeper.Keeper
+	codec     codec.Codec
+	addrCdc   address.Codec
 }
 
 // LoadABI loads the gov ABI from the embedded abi.json file
@@ -41,7 +46,8 @@ func LoadABI() (abi.ABI, error) {
 // PrecompiledContract interface.
 func NewPrecompile(
 	govKeeper govkeeper.Keeper,
-	authzKeeper authzkeeper.Keeper,
+	codec codec.Codec,
+	addrCdc address.Codec,
 ) (*Precompile, error) {
 	abi, err := LoadABI()
 	if err != nil {
@@ -51,12 +57,12 @@ func NewPrecompile(
 	p := &Precompile{
 		Precompile: cmn.Precompile{
 			ABI:                  abi,
-			AuthzKeeper:          authzKeeper,
 			KvGasConfig:          storetypes.KVGasConfig(),
 			TransientKVGasConfig: storetypes.TransientGasConfig(),
-			ApprovalExpiration:   cmn.DefaultExpirationDuration, // should be configurable in the future.
 		},
 		govKeeper: govKeeper,
+		codec:     codec,
+		addrCdc:   addrCdc,
 	}
 
 	// SetAddress defines the address of the gov precompiled contract.
@@ -84,10 +90,22 @@ func (p Precompile) RequiredGas(input []byte) uint64 {
 
 // Run executes the precompiled contract gov methods defined in the ABI.
 func (p Precompile) Run(evm *vm.EVM, contract *vm.Contract, readOnly bool) (bz []byte, err error) {
-	ctx, stateDB, snapshot, method, initialGas, args, err := p.RunSetup(evm, contract, readOnly, p.IsTransaction)
+	bz, err = p.run(evm, contract, readOnly)
+	if err != nil {
+		return cmn.ReturnRevertError(evm, err)
+	}
+
+	return bz, nil
+}
+
+func (p Precompile) run(evm *vm.EVM, contract *vm.Contract, readOnly bool) (bz []byte, err error) {
+	ctx, stateDB, method, initialGas, args, err := p.RunSetup(evm, contract, readOnly, p.IsTransaction)
 	if err != nil {
 		return nil, err
 	}
+
+	// Start the balance change handler before executing the precompile.
+	p.GetBalanceHandler().BeforeBalanceChange(ctx)
 
 	// This handles any out of gas errors that may occur during the execution of a precompile tx or query.
 	// It avoids panics and returns the out of gas error so the EVM can continue gracefully.
@@ -96,9 +114,15 @@ func (p Precompile) Run(evm *vm.EVM, contract *vm.Contract, readOnly bool) (bz [
 	switch method.Name {
 	// gov transactions
 	case VoteMethod:
-		bz, err = p.Vote(ctx, evm.Origin, contract, stateDB, method, args)
+		bz, err = p.Vote(ctx, contract, stateDB, method, args)
 	case VoteWeightedMethod:
-		bz, err = p.VoteWeighted(ctx, evm.Origin, contract, stateDB, method, args)
+		bz, err = p.VoteWeighted(ctx, contract, stateDB, method, args)
+	case SubmitProposalMethod:
+		bz, err = p.SubmitProposal(ctx, contract, stateDB, method, args)
+	case DepositMethod:
+		bz, err = p.Deposit(ctx, contract, stateDB, method, args)
+	case CancelProposalMethod:
+		bz, err = p.CancelProposal(ctx, contract, stateDB, method, args)
 
 	// gov queries
 	case GetVoteMethod:
@@ -117,6 +141,8 @@ func (p Precompile) Run(evm *vm.EVM, contract *vm.Contract, readOnly bool) (bz [
 		bz, err = p.GetProposals(ctx, method, contract, args)
 	case GetParamsMethod:
 		bz, err = p.GetParams(ctx, method, contract, args)
+	case GetConstitutionMethod:
+		bz, err = p.GetConstitution(ctx, method, contract, args)
 	default:
 		return nil, fmt.Errorf(cmn.ErrUnknownMethod, method.Name)
 	}
@@ -127,11 +153,13 @@ func (p Precompile) Run(evm *vm.EVM, contract *vm.Contract, readOnly bool) (bz [
 
 	cost := ctx.GasMeter().GasConsumed() - initialGas
 
-	if !contract.UseGas(cost) {
+	if !contract.UseGas(cost, nil, tracing.GasChangeCallPrecompiledContract) {
 		return nil, vm.ErrOutOfGas
 	}
 
-	if err := p.AddJournalEntries(stateDB, snapshot); err != nil {
+	// Process the native balance changes after the method execution.
+	err = p.GetBalanceHandler().AfterBalanceChange(ctx, stateDB)
+	if err != nil {
 		return nil, err
 	}
 
@@ -141,7 +169,8 @@ func (p Precompile) Run(evm *vm.EVM, contract *vm.Contract, readOnly bool) (bz [
 // IsTransaction checks if the given method name corresponds to a transaction or query.
 func (Precompile) IsTransaction(method *abi.Method) bool {
 	switch method.Name {
-	case VoteMethod, VoteWeightedMethod:
+	case VoteMethod, VoteWeightedMethod,
+		SubmitProposalMethod, DepositMethod, CancelProposalMethod:
 		return true
 	default:
 		return false

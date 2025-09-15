@@ -3,13 +3,14 @@ package werc20
 import (
 	"math/big"
 
-	sdk "github.com/cosmos/cosmos-sdk/types"
-
-	cmn "github.com/cosmos/evm/precompiles/common"
 	"github.com/ethereum/go-ethereum/accounts/abi"
 	"github.com/ethereum/go-ethereum/common"
 	ethtypes "github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/core/vm"
+
+	cmn "github.com/cosmos/evm/precompiles/common"
+
+	sdk "github.com/cosmos/cosmos-sdk/types"
 )
 
 const (
@@ -26,7 +27,7 @@ func (p Precompile) EmitDepositEvent(
 	caller common.Address,
 	amount *big.Int,
 ) error {
-	event := p.ABI.Events[EventTypeDeposit]
+	event := p.Events[EventTypeDeposit]
 	return p.createWERC20Event(ctx, stateDB, event, caller, amount)
 }
 
@@ -37,7 +38,7 @@ func (p Precompile) EmitWithdrawalEvent(
 	src common.Address,
 	amount *big.Int,
 ) error {
-	event := p.ABI.Events[EventTypeWithdrawal]
+	event := p.Events[EventTypeWithdrawal]
 	return p.createWERC20Event(ctx, stateDB, event, src, amount)
 }
 

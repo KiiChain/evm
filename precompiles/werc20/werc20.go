@@ -5,13 +5,11 @@ import (
 	"fmt"
 	"slices"
 
-	"github.com/cosmos/evm/x/vm/core/vm"
-
 	"github.com/ethereum/go-ethereum/accounts/abi"
 	"github.com/ethereum/go-ethereum/common"
+	"github.com/ethereum/go-ethereum/core/tracing"
+	"github.com/ethereum/go-ethereum/core/vm"
 
-	authzkeeper "github.com/cosmos/cosmos-sdk/x/authz/keeper"
-	bankkeeper "github.com/cosmos/cosmos-sdk/x/bank/keeper"
 	cmn "github.com/cosmos/evm/precompiles/common"
 	erc20 "github.com/cosmos/evm/precompiles/erc20"
 	erc20types "github.com/cosmos/evm/x/erc20/types"
@@ -51,8 +49,8 @@ func LoadABI() (abi.ABI, error) {
 // instance to provide additional methods.
 func NewPrecompile(
 	tokenPair erc20types.TokenPair,
-	bankKeeper bankkeeper.Keeper,
-	authzKeeper authzkeeper.Keeper,
+	bankKeeper cmn.BankKeeper,
+	erc20Keeper Erc20Keeper,
 	transferKeeper transferkeeper.Keeper,
 ) (*Precompile, error) {
 	newABI, err := LoadABI()
@@ -60,13 +58,13 @@ func NewPrecompile(
 		return nil, fmt.Errorf("error loading the ABI: %w", err)
 	}
 
-	erc20Precompile, err := erc20.NewPrecompile(tokenPair, bankKeeper, authzKeeper, transferKeeper)
+	erc20Precompile, err := erc20.NewPrecompile(tokenPair, bankKeeper, erc20Keeper, transferKeeper)
 	if err != nil {
 		return nil, fmt.Errorf("error instantiating the ERC20 precompile: %w", err)
 	}
 
 	// use the IWERC20 ABI
-	erc20Precompile.Precompile.ABI = newABI
+	erc20Precompile.ABI = newABI
 
 	return &Precompile{
 		Precompile: erc20Precompile,
@@ -107,7 +105,16 @@ func (p Precompile) RequiredGas(input []byte) uint64 {
 
 // Run executes the precompiled contract WERC20 methods defined in the ABI.
 func (p Precompile) Run(evm *vm.EVM, contract *vm.Contract, readOnly bool) (bz []byte, err error) {
-	ctx, stateDB, snapshot, method, initialGas, args, err := p.RunSetup(evm, contract, readOnly, p.IsTransaction)
+	bz, err = p.run(evm, contract, readOnly)
+	if err != nil {
+		return cmn.ReturnRevertError(evm, err)
+	}
+
+	return bz, nil
+}
+
+func (p Precompile) run(evm *vm.EVM, contract *vm.Contract, readOnly bool) (bz []byte, err error) {
+	ctx, stateDB, method, initialGas, args, err := p.RunSetup(evm, contract, readOnly, p.IsTransaction)
 	if err != nil {
 		return nil, err
 	}
@@ -126,7 +133,7 @@ func (p Precompile) Run(evm *vm.EVM, contract *vm.Contract, readOnly bool) (bz [
 		bz, err = p.Withdraw(ctx, contract, stateDB, args)
 	default:
 		// ERC20 transactions and queries
-		bz, err = p.Precompile.HandleMethod(ctx, contract, stateDB, method, args)
+		bz, err = p.HandleMethod(ctx, contract, stateDB, method, args)
 	}
 
 	if err != nil {
@@ -135,13 +142,10 @@ func (p Precompile) Run(evm *vm.EVM, contract *vm.Contract, readOnly bool) (bz [
 
 	cost := ctx.GasMeter().GasConsumed() - initialGas
 
-	if !contract.UseGas(cost) {
+	if !contract.UseGas(cost, nil, tracing.GasChangeCallPrecompiledContract) {
 		return nil, vm.ErrOutOfGas
 	}
 
-	if err := p.AddJournalEntries(stateDB, snapshot); err != nil {
-		return nil, err
-	}
 	return bz, nil
 }
 

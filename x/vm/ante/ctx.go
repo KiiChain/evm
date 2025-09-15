@@ -2,10 +2,11 @@ package ante
 
 import (
 	storetypes "cosmossdk.io/store/types"
+
 	sdktypes "github.com/cosmos/cosmos-sdk/types"
 )
 
-// BuildEvmExecutionCtx builds the context needed prior to executing an EVM transaction.
+// BuildEvmExecutionCtx builds the context needed before executing an EVM transaction.
 // It does the following:
 // 1. Sets an empty KV gas config for gas to be calculated by opcodes
 // and not kvstore actions

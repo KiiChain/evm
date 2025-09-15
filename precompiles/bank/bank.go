@@ -9,14 +9,16 @@ import (
 	"embed"
 	"fmt"
 
-	storetypes "cosmossdk.io/store/types"
-	bankkeeper "github.com/cosmos/cosmos-sdk/x/bank/keeper"
-	cmn "github.com/cosmos/evm/precompiles/common"
-	erc20keeper "github.com/cosmos/evm/x/erc20/keeper"
-	"github.com/cosmos/evm/x/vm/core/vm"
-	evmtypes "github.com/cosmos/evm/x/vm/types"
 	"github.com/ethereum/go-ethereum/accounts/abi"
 	"github.com/ethereum/go-ethereum/common"
+	"github.com/ethereum/go-ethereum/core/tracing"
+	"github.com/ethereum/go-ethereum/core/vm"
+
+	cmn "github.com/cosmos/evm/precompiles/common"
+	erc20keeper "github.com/cosmos/evm/x/erc20/keeper"
+	evmtypes "github.com/cosmos/evm/x/vm/types"
+
+	storetypes "cosmossdk.io/store/types"
 )
 
 const (
@@ -40,14 +42,14 @@ var f embed.FS
 // Precompile defines the bank precompile
 type Precompile struct {
 	cmn.Precompile
-	bankKeeper  bankkeeper.Keeper
+	bankKeeper  cmn.BankKeeper
 	erc20Keeper erc20keeper.Keeper
 }
 
 // NewPrecompile creates a new bank Precompile instance implementing the
 // PrecompiledContract interface.
 func NewPrecompile(
-	bankKeeper bankkeeper.Keeper,
+	bankKeeper cmn.BankKeeper,
 	erc20Keeper erc20keeper.Keeper,
 ) (*Precompile, error) {
 	newABI, err := cmn.LoadABI(f, "abi.json")
@@ -102,7 +104,7 @@ func (p Precompile) RequiredGas(input []byte) uint64 {
 
 // Run executes the precompiled contract bank query methods defined in the ABI.
 func (p Precompile) Run(evm *vm.EVM, contract *vm.Contract, readOnly bool) (bz []byte, err error) {
-	ctx, stateDB, snapshot, method, initialGas, args, err := p.RunSetup(evm, contract, readOnly, p.IsTransaction)
+	ctx, _, method, initialGas, args, err := p.RunSetup(evm, contract, readOnly, p.IsTransaction)
 	if err != nil {
 		return nil, err
 	}
@@ -129,12 +131,8 @@ func (p Precompile) Run(evm *vm.EVM, contract *vm.Contract, readOnly bool) (bz [
 
 	cost := ctx.GasMeter().GasConsumed() - initialGas
 
-	if !contract.UseGas(cost) {
+	if !contract.UseGas(cost, nil, tracing.GasChangeCallPrecompiledContract) {
 		return nil, vm.ErrOutOfGas
-	}
-
-	if err := p.AddJournalEntries(stateDB, snapshot); err != nil {
-		return nil, err
 	}
 
 	return bz, nil

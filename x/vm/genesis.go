@@ -3,12 +3,15 @@ package vm
 import (
 	"fmt"
 
-	abci "github.com/cometbft/cometbft/abci/types"
-	sdk "github.com/cosmos/cosmos-sdk/types"
-	"github.com/cosmos/evm/x/vm/keeper"
-	"github.com/cosmos/evm/x/vm/types"
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/crypto"
+
+	abci "github.com/cometbft/cometbft/abci/types"
+
+	"github.com/cosmos/evm/x/vm/keeper"
+	"github.com/cosmos/evm/x/vm/types"
+
+	sdk "github.com/cosmos/cosmos-sdk/types"
 )
 
 // InitGenesis initializes genesis state based on exported genesis
@@ -52,6 +55,10 @@ func InitGenesis(
 		for _, storage := range account.Storage {
 			k.SetState(ctx, address, common.HexToHash(storage.Key), common.HexToHash(storage.Value).Bytes())
 		}
+	}
+
+	if err := k.AddPreinstalls(ctx, data.Preinstalls); err != nil {
+		panic(fmt.Errorf("error adding preinstalls: %s", err))
 	}
 
 	return []abci.ValidatorUpdate{}

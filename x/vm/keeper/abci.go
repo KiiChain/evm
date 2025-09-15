@@ -1,10 +1,13 @@
 package keeper
 
 import (
-	storetypes "cosmossdk.io/store/types"
-	sdk "github.com/cosmos/cosmos-sdk/types"
-	evmtypes "github.com/cosmos/evm/x/vm/types"
 	ethtypes "github.com/ethereum/go-ethereum/core/types"
+
+	evmtypes "github.com/cosmos/evm/x/vm/types"
+
+	storetypes "cosmossdk.io/store/types"
+
+	sdk "github.com/cosmos/cosmos-sdk/types"
 )
 
 // BeginBlock emits a base fee event which will be adjusted to the evm decimals
@@ -37,6 +40,10 @@ func (k *Keeper) BeginBlock(ctx sdk.Context) error {
 func (k *Keeper) EndBlock(ctx sdk.Context) error {
 	// Gas costs are handled within msg handler so costs should be ignored
 	infCtx := ctx.WithGasMeter(storetypes.NewInfiniteGasMeter())
+
+	if k.evmMempool != nil {
+		k.evmMempool.GetBlockchain().NotifyNewBlock()
+	}
 
 	bloom := ethtypes.BytesToBloom(k.GetBlockBloomTransient(infCtx).Bytes())
 	k.EmitBlockBloomEvent(infCtx, bloom)

@@ -5,17 +5,19 @@ import (
 	"maps"
 	"math/big"
 
-	sdk "github.com/cosmos/cosmos-sdk/types"
+	"github.com/ethereum/go-ethereum/common"
+
 	"github.com/cosmos/evm/x/vm/statedb"
 	"github.com/cosmos/evm/x/vm/types"
-	"github.com/ethereum/go-ethereum/common"
-	"github.com/ethereum/go-ethereum/crypto"
+
+	storetypes "cosmossdk.io/store/types"
+
+	sdk "github.com/cosmos/cosmos-sdk/types"
 )
 
 var (
-	_             statedb.Keeper = &MockKeeper{}
-	errAddress    common.Address = common.BigToAddress(big.NewInt(100))
-	emptyCodeHash                = crypto.Keccak256(nil)
+	_          statedb.Keeper = &MockKeeper{}
+	errAddress common.Address = common.BigToAddress(big.NewInt(100))
 )
 
 type MockAcount struct {
@@ -26,6 +28,10 @@ type MockAcount struct {
 type MockKeeper struct {
 	accounts map[common.Address]MockAcount
 	codes    map[common.Hash][]byte
+}
+
+func (k MockKeeper) GetCodeHash(_ sdk.Context, addr common.Address) common.Hash {
+	return common.HexToHash(addr.Hex())
 }
 
 func NewMockKeeper() *MockKeeper {
@@ -112,4 +118,8 @@ func (k MockKeeper) Clone() *MockKeeper {
 	accounts := maps.Clone(k.accounts)
 	codes := maps.Clone(k.codes)
 	return &MockKeeper{accounts, codes}
+}
+
+func (k MockKeeper) KVStoreKeys() map[string]*storetypes.KVStoreKey {
+	return make(map[string]*storetypes.KVStoreKey)
 }

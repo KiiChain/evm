@@ -5,18 +5,20 @@ import (
 	"fmt"
 	"math/big"
 
-	abci "github.com/cometbft/cometbft/abci/types"
-	sdk "github.com/cosmos/cosmos-sdk/types"
-	"github.com/cosmos/evm/crypto/ethsecp256k1"
-	exampleapp "github.com/cosmos/evm/example_chain"
-	chainutil "github.com/cosmos/evm/example_chain/testutil"
-	precompiletestutil "github.com/cosmos/evm/precompiles/testutil"
-	evmtypes "github.com/cosmos/evm/x/vm/types"
 	"github.com/ethereum/go-ethereum/crypto"
+
+	abci "github.com/cometbft/cometbft/abci/types"
+
+	"github.com/cosmos/evm"
+	"github.com/cosmos/evm/crypto/ethsecp256k1"
+	"github.com/cosmos/evm/testutil/integration"
+	evmtypes "github.com/cosmos/evm/x/vm/types"
+
+	sdk "github.com/cosmos/cosmos-sdk/types"
 )
 
 // Call is a helper function to call any arbitrary smart contract.
-func Call(ctx sdk.Context, app *exampleapp.ExampleChain, args CallArgs) (res abci.ExecTxResult, ethRes *evmtypes.MsgEthereumTxResponse, err error) {
+func Call(ctx sdk.Context, app evm.EvmApp, args CallArgs) (res abci.ExecTxResult, ethRes *evmtypes.MsgEthereumTxResponse, err error) {
 	var (
 		nonce    uint64
 		gasLimit = args.GasLimit
@@ -39,7 +41,7 @@ func Call(ctx sdk.Context, app *exampleapp.ExampleChain, args CallArgs) (res abc
 	addr := crypto.PubkeyToAddress(key.PublicKey)
 
 	if args.Nonce == nil {
-		nonce = app.EVMKeeper.GetNonce(ctx, addr)
+		nonce = app.GetEVMKeeper().GetNonce(ctx, addr)
 	} else {
 		nonce = args.Nonce.Uint64()
 	}
@@ -53,7 +55,7 @@ func Call(ctx sdk.Context, app *exampleapp.ExampleChain, args CallArgs) (res abc
 	// if gas price not provided
 	var gasPrice *big.Int
 	if args.GasPrice == nil {
-		baseFeeRes, err := app.EVMKeeper.BaseFee(ctx, &evmtypes.QueryBaseFeeRequest{})
+		baseFeeRes, err := app.GetEVMKeeper().BaseFee(ctx, &evmtypes.QueryBaseFeeRequest{})
 		if err != nil {
 			return abci.ExecTxResult{}, nil, err
 		}
@@ -61,13 +63,13 @@ func Call(ctx sdk.Context, app *exampleapp.ExampleChain, args CallArgs) (res abc
 	} else {
 		gasPrice = args.GasPrice
 	}
-	// Create MsgEthereumTx that calls the contract
+	// create MsgEthereumTx that calls the contract
 	input, err := args.ContractABI.Pack(args.MethodName, args.Args...)
 	if err != nil {
 		return abci.ExecTxResult{}, nil, fmt.Errorf("error while packing the input: %v", err)
 	}
 
-	// Create MsgEthereumTx that calls the contract
+	// create MsgEthereumTx that calls the contract
 	msg := evmtypes.NewTx(&evmtypes.EvmTxArgs{
 		ChainID:   evmtypes.GetEthChainConfig().ChainID,
 		Nonce:     nonce,
@@ -80,9 +82,9 @@ func Call(ctx sdk.Context, app *exampleapp.ExampleChain, args CallArgs) (res abc
 		Input:     input,
 		Accesses:  args.AccessList,
 	})
-	msg.From = addr.Hex()
+	msg.From = addr.Bytes()
 
-	res, err = chainutil.DeliverEthTx(app, args.PrivKey, msg)
+	res, err = integration.DeliverEthTx(app, args.PrivKey, msg)
 	if err != nil {
 		return res, nil, fmt.Errorf("error during deliver tx: %s", err)
 	}
@@ -96,16 +98,4 @@ func Call(ctx sdk.Context, app *exampleapp.ExampleChain, args CallArgs) (res abc
 	}
 
 	return res, ethRes, nil
-}
-
-// CallContractAndCheckLogs is a helper function to call any arbitrary smart contract and check that the logs
-// contain the expected events.
-func CallContractAndCheckLogs(ctx sdk.Context, app *exampleapp.ExampleChain, cArgs CallArgs, logCheckArgs precompiletestutil.LogCheckArgs) (abci.ExecTxResult, *evmtypes.MsgEthereumTxResponse, error) {
-	res, ethRes, err := Call(ctx, app, cArgs)
-	if err != nil {
-		return res, nil, err
-	}
-
-	logCheckArgs.Res = res
-	return res, ethRes, precompiletestutil.CheckLogs(logCheckArgs)
 }
