@@ -46,6 +46,7 @@ func LoadABI() (abi.ABI, error) {
 // PrecompiledContract interface.
 func NewPrecompile(
 	govKeeper govkeeper.Keeper,
+	bankKeeper cmn.BankKeeper,
 	codec codec.Codec,
 	addrCdc address.Codec,
 ) (*Precompile, error) {
@@ -56,9 +57,10 @@ func NewPrecompile(
 
 	p := &Precompile{
 		Precompile: cmn.Precompile{
-			ABI:                  abi,
-			KvGasConfig:          storetypes.KVGasConfig(),
-			TransientKVGasConfig: storetypes.TransientGasConfig(),
+			ABI:                   abi,
+			KvGasConfig:           storetypes.KVGasConfig(),
+			TransientKVGasConfig:  storetypes.TransientGasConfig(),
+			BalanceHandlerFactory: cmn.NewBalanceHandlerFactory(bankKeeper),
 		},
 		govKeeper: govKeeper,
 		codec:     codec,
@@ -105,7 +107,14 @@ func (p Precompile) run(evm *vm.EVM, contract *vm.Contract, readOnly bool) (bz [
 	}
 
 	// Start the balance change handler before executing the precompile.
-	p.GetBalanceHandler().BeforeBalanceChange(ctx)
+	var balanceHandler *cmn.BalanceHandler
+	if p.BalanceHandlerFactory != nil {
+		balanceHandler = p.BalanceHandlerFactory.NewBalanceHandler()
+	}
+
+	if balanceHandler != nil {
+		balanceHandler.BeforeBalanceChange(ctx)
+	}
 
 	// This handles any out of gas errors that may occur during the execution of a precompile tx or query.
 	// It avoids panics and returns the out of gas error so the EVM can continue gracefully.
@@ -158,9 +167,10 @@ func (p Precompile) run(evm *vm.EVM, contract *vm.Contract, readOnly bool) (bz [
 	}
 
 	// Process the native balance changes after the method execution.
-	err = p.GetBalanceHandler().AfterBalanceChange(ctx, stateDB)
-	if err != nil {
-		return nil, err
+	if balanceHandler != nil {
+		if err := balanceHandler.AfterBalanceChange(ctx, stateDB); err != nil {
+			return nil, err
+		}
 	}
 
 	return bz, nil

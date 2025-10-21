@@ -167,7 +167,8 @@ func TestAfterBalanceChange(t *testing.T) {
 	// initial balance for spender
 	stateDB.AddBalance(spender, uint256.NewInt(5), tracing.BalanceChangeUnspecified)
 
-	bh := NewBalanceHandler()
+	bfh := NewBalanceHandlerFactory(mocks.NewBankKeeper(t))
+	bh := bfh.NewBalanceHandler()
 	bh.BeforeBalanceChange(ctx)
 
 	coins := sdk.NewCoins(sdk.NewInt64Coin(evmtypes.GetEVMCoinDenom(), 3))
@@ -195,7 +196,8 @@ func TestAfterBalanceChangeErrors(t *testing.T) {
 	require.NoError(t, err)
 	addr := addrs[0]
 
-	bh := NewBalanceHandler()
+	bfh := NewBalanceHandlerFactory(mocks.NewBankKeeper(t))
+	bh := bfh.NewBalanceHandler()
 	bh.BeforeBalanceChange(ctx)
 
 	// invalid address in event

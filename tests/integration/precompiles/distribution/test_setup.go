@@ -131,6 +131,7 @@ func (s *PrecompileTestSuite) SetupTest() {
 	s.network = nw
 	s.precompile, err = distribution.NewPrecompile(
 		s.network.App.GetDistrKeeper(),
+		s.network.App.GetBankKeeper(),
 		*s.network.App.GetStakingKeeper(),
 		s.network.App.GetEVMKeeper(),
 		address.NewBech32Codec(sdk.GetConfig().GetBech32AccountAddrPrefix()),
