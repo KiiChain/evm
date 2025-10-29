@@ -34,6 +34,7 @@ import (
 type revision struct {
 	id           int
 	journalIndex int
+	events       sdk.Events
 }
 
 var _ vm.StateDB = &StateDB{}
@@ -102,6 +103,15 @@ func (s *StateDB) GetStorageRoot(addr common.Address) common.Hash {
 		return true
 	})
 	return sr.Hash()
+}
+
+func (s *StateDB) IsStorageEmpty(addr common.Address) bool {
+	empty := true
+	s.keeper.ForEachStorage(s.ctx, addr, func(key, value common.Hash) bool {
+		empty = false
+		return false
+	})
+	return empty
 }
 
 /*
@@ -209,8 +219,6 @@ func (s *StateDB) cache() error {
 func (s *StateDB) AddLog(log *ethtypes.Log) {
 	s.journal.append(addLogChange{})
 
-	log.TxHash = s.txConfig.TxHash
-	log.BlockHash = s.txConfig.BlockHash
 	log.TxIndex = s.txConfig.TxIndex
 	log.Index = s.txConfig.LogIndex + uint(len(s.logs))
 	s.logs = append(s.logs, log)
@@ -425,12 +433,11 @@ func (s *StateDB) setStateObject(object *stateObject) {
 // AddPrecompileFn adds a precompileCall journal entry
 // with a snapshot of the multi-store and events previous
 // to the precompile call.
-func (s *StateDB) AddPrecompileFn(addr common.Address, snapshot int, events sdk.Events) error {
-	stateObject := s.getOrNewStateObject(addr)
-	if stateObject == nil {
-		return fmt.Errorf("could not add precompile call to address %s. State object not found", addr)
-	}
-	stateObject.AddPrecompileFn(snapshot, events)
+func (s *StateDB) AddPrecompileFn(snapshot int, events sdk.Events) error {
+	s.journal.append(precompileCallChange{
+		snapshot: snapshot,
+		events:   events,
+	})
 	s.precompileCallsCounter++
 	if s.precompileCallsCounter > types.MaxPrecompileCalls {
 		return fmt.Errorf("max calls to precompiles (%d) reached", types.MaxPrecompileCalls)
@@ -484,6 +491,22 @@ func (s *StateDB) SetState(addr common.Address, key, value common.Hash) common.H
 		return stateObject.SetState(key, value)
 	}
 	return common.Hash{}
+}
+
+// SetBalance sets the balance of account associated with addr to amount.
+func (s *StateDB) SetBalance(addr common.Address, amount *uint256.Int, reason tracing.BalanceChangeReason) {
+	stateObject := s.getOrNewStateObject(addr)
+	if stateObject != nil {
+		stateObject.SetBalance(amount)
+	}
+}
+
+// SetStorage replaces the entire storage for the specified account with given
+// storage. This function should only be used for debugging and the mutations
+// must be discarded afterwards.
+func (s *StateDB) SetStorage(addr common.Address, storage Storage) {
+	stateObject := s.getOrNewStateObject(addr)
+	stateObject.SetStorage(storage)
 }
 
 // SelfDestruct marks the given account as self-destructed.
@@ -641,7 +664,7 @@ func (s *StateDB) SlotInAccessList(addr common.Address, slot common.Hash) (addre
 func (s *StateDB) Snapshot() int {
 	id := s.nextRevisionID
 	s.nextRevisionID++
-	s.validRevisions = append(s.validRevisions, revision{id, s.journal.length()})
+	s.validRevisions = append(s.validRevisions, revision{id, s.journal.length(), s.ctx.EventManager().Events()})
 	return id
 }
 
@@ -655,6 +678,11 @@ func (s *StateDB) RevertToSnapshot(revid int) {
 		panic(fmt.Errorf("revision id %v cannot be reverted", revid))
 	}
 	snapshot := s.validRevisions[idx].journalIndex
+
+	// revert back to snapshotted events
+	eventManager := sdk.NewEventManager()
+	eventManager.EmitEvents(s.validRevisions[idx].events)
+	s.ctx = s.ctx.WithEventManager(eventManager)
 
 	// Replay the journal to undo changes and remove invalidated snapshots
 	s.journal.Revert(s, snapshot)
