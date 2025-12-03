@@ -1,14 +1,19 @@
 package keeper
 
 import (
-	"cosmossdk.io/store/prefix"
-	sdk "github.com/cosmos/cosmos-sdk/types"
-	"github.com/cosmos/evm/x/vm/types"
 	"github.com/ethereum/go-ethereum/common"
+	ethtypes "github.com/ethereum/go-ethereum/core/types"
+
+	sdk "github.com/cosmos/cosmos-sdk/types"
 )
 
 // IsContract determines if the given address is a smart contract.
+// It checks if the account has associated code and ensures that
+// the code is not a delegated contract (EIP-7702).
 func (k *Keeper) IsContract(ctx sdk.Context, addr common.Address) bool {
-	store := prefix.NewStore(ctx.KVStore(k.storeKey), types.KeyPrefixCodeHash)
-	return store.Has(addr.Bytes())
+	codeHash := k.GetCodeHash(ctx, addr)
+	code := k.GetCode(ctx, codeHash)
+
+	_, delegated := ethtypes.ParseDelegation(code)
+	return len(code) > 0 && !delegated
 }

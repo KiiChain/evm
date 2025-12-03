@@ -2,11 +2,14 @@ package testutil
 
 import (
 	"fmt"
+	"maps"
 	"slices"
 
-	abci "github.com/cometbft/cometbft/abci/types"
-	evmtypes "github.com/cosmos/evm/x/vm/types"
 	"github.com/ethereum/go-ethereum/accounts/abi"
+
+	abci "github.com/cometbft/cometbft/abci/types"
+
+	evmtypes "github.com/cosmos/evm/x/vm/types"
 )
 
 // CheckLogs checks the logs for the given events and whether the transaction was successful or not.
@@ -84,8 +87,13 @@ type LogCheckArgs struct {
 }
 
 // WithABIEvents sets the ABIEvents field of LogCheckArgs.
-func (l LogCheckArgs) WithABIEvents(abiEvents map[string]abi.Event) LogCheckArgs {
-	l.ABIEvents = abiEvents
+func (l LogCheckArgs) WithABIEvents(abiEvents ...map[string]abi.Event) LogCheckArgs {
+	combinedABIEvents := make(map[string]abi.Event)
+	for _, evtMap := range abiEvents {
+		maps.Copy(combinedABIEvents, evtMap)
+	}
+
+	l.ABIEvents = combinedABIEvents
 	return l
 }
 
@@ -96,6 +104,16 @@ func (l LogCheckArgs) WithErrContains(errContains string, printArgs ...interface
 		errContains = fmt.Sprintf(errContains, printArgs...)
 	}
 	l.ErrContains = errContains
+	return l
+}
+
+// WithErrNested append the ErrContains field of LogCheckArgs.
+// If any printArgs are provided, they are used to format the error message.
+func (l LogCheckArgs) WithErrNested(errContains string, printArgs ...interface{}) LogCheckArgs {
+	if len(printArgs) > 0 {
+		errContains = fmt.Sprintf(errContains, printArgs...)
+	}
+	l.ErrContains = fmt.Sprint(l.ErrContains, ": ", errContains)
 	return l
 }
 

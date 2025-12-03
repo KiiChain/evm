@@ -7,12 +7,13 @@ import (
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/hashicorp/go-metrics"
 
+	erc20types "github.com/cosmos/evm/x/erc20/types"
+	"github.com/cosmos/ibc-go/v10/modules/apps/transfer/types"
+
 	storetypes "cosmossdk.io/store/types"
+
 	"github.com/cosmos/cosmos-sdk/telemetry"
 	sdk "github.com/cosmos/cosmos-sdk/types"
-
-	erc20types "github.com/cosmos/evm/x/erc20/types"
-	"github.com/cosmos/ibc-go/v8/modules/apps/transfer/types"
 )
 
 var _ types.MsgServer = Keeper{}
@@ -42,7 +43,7 @@ func (k Keeper) Transfer(goCtx context.Context, msg *types.MsgTransfer) (*types.
 	}()
 
 	// use native denom or contract address
-	denom := strings.TrimPrefix(msg.Token.Denom, erc20types.ModuleName+"/")
+	denom := strings.TrimPrefix(msg.Token.Denom, erc20types.Erc20NativeCoinDenomPrefix)
 
 	pairID := k.erc20Keeper.GetTokenPairID(ctx, denom)
 	if len(pairID) == 0 {
@@ -70,7 +71,7 @@ func (k Keeper) Transfer(goCtx context.Context, msg *types.MsgTransfer) (*types.
 		return k.Keeper.Transfer(ctx, msg)
 	}
 	// if the user has enough balance of the Cosmos representation, then we don't need to Convert
-	balance := k.bankKeeper.GetBalance(ctx, sender, pair.Denom)
+	balance := k.bankKeeper.SpendableCoin(ctx, sender, pair.Denom)
 	if balance.Amount.GTE(msg.Token.Amount) {
 
 		defer func() {

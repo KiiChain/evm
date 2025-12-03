@@ -4,10 +4,12 @@ import (
 	"math/big"
 	"testing"
 
-	abci "github.com/cometbft/cometbft/abci/types"
-	evmtypes "github.com/cosmos/evm/x/vm/types"
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/stretchr/testify/require"
+
+	abci "github.com/cometbft/cometbft/abci/types"
+
+	evmtypes "github.com/cosmos/evm/x/vm/types"
 )
 
 func TestParseTxResult(t *testing.T) {
@@ -56,7 +58,6 @@ func TestParseTxResult(t *testing.T) {
 						{Key: "recipient", Value: "0x775b87ef5D82ca211811C1a02CE0fE0CA3a455d7"},
 						{Key: "ethereumTxFailed", Value: "contract everted"},
 					}},
-					{Type: evmtypes.EventTypeTxLog, Attributes: []abci.EventAttribute{}},
 				},
 			},
 			[]*ParsedTx{
@@ -141,7 +142,6 @@ func TestParseTxResult(t *testing.T) {
 						{Key: "recipient", Value: "0x775b87ef5D82ca211811C1a02CE0fE0CA3a455d7"},
 						{Key: "ethereumTxFailed", Value: "contract everted"},
 					}},
-					{Type: evmtypes.EventTypeTxLog, Attributes: []abci.EventAttribute{}},
 				},
 			},
 			nil,

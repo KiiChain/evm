@@ -3,14 +3,14 @@ package slashing
 import (
 	"fmt"
 
-	cmn "github.com/cosmos/evm/precompiles/common"
-	"github.com/cosmos/evm/x/vm/core/vm"
-
-	sdk "github.com/cosmos/cosmos-sdk/types"
-	slashingkeeper "github.com/cosmos/cosmos-sdk/x/slashing/keeper"
-	"github.com/cosmos/cosmos-sdk/x/slashing/types"
 	"github.com/ethereum/go-ethereum/accounts/abi"
 	"github.com/ethereum/go-ethereum/common"
+	"github.com/ethereum/go-ethereum/core/vm"
+
+	cmn "github.com/cosmos/evm/precompiles/common"
+
+	sdk "github.com/cosmos/cosmos-sdk/types"
+	"github.com/cosmos/cosmos-sdk/x/slashing/types"
 )
 
 const (
@@ -25,7 +25,7 @@ func (p Precompile) Unjail(
 	ctx sdk.Context,
 	method *abi.Method,
 	stateDB vm.StateDB,
-	_ *vm.Contract,
+	contract *vm.Contract,
 	args []interface{},
 ) ([]byte, error) {
 	if len(args) != 1 {
@@ -37,12 +37,21 @@ func (p Precompile) Unjail(
 		return nil, fmt.Errorf("invalid validator hex address")
 	}
 
-	msg := &types.MsgUnjail{
-		ValidatorAddr: sdk.ValAddress(validatorAddress.Bytes()).String(),
+	msgSender := contract.Caller()
+	if msgSender != validatorAddress {
+		return nil, fmt.Errorf(cmn.ErrRequesterIsNotMsgSender, msgSender.String(), validatorAddress.String())
 	}
 
-	msgSrv := slashingkeeper.NewMsgServerImpl(p.slashingKeeper)
-	if _, err := msgSrv.Unjail(ctx, msg); err != nil {
+	valAddr, err := p.valCodec.BytesToString(validatorAddress.Bytes())
+	if err != nil {
+		return nil, fmt.Errorf("failed to convert validator address: %w", err)
+	}
+
+	msg := &types.MsgUnjail{
+		ValidatorAddr: valAddr,
+	}
+
+	if _, err := p.slashingMsgServer.Unjail(ctx, msg); err != nil {
 		return nil, err
 	}
 

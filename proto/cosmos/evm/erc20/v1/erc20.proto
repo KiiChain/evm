@@ -17,8 +17,8 @@ enum Owner {
   OWNER_EXTERNAL = 2;
 }
 
-// TokenPair defines an instance that records a pairing consisting of a native
-// Cosmos Coin and an ERC20 token address.
+// TokenPair defines an instance that records a pairing (mapping) consisting of a native
+// Cosmos Coin and an ERC20 token address. The "pair" does not imply an asset swap exchange.
 message TokenPair {
   option (gogoproto.equal) = true;
   // erc20_address is the hex address of ERC20 contract token
@@ -30,6 +30,27 @@ message TokenPair {
   // contract_owner is the an ENUM specifying the type of ERC20 owner (0
   // invalid, 1 ModuleAccount, 2 external address)
   Owner contract_owner = 4;
+}
+
+// Allowance is a token allowance only for erc20 precompile
+message Allowance {
+  option (gogoproto.equal) = false;
+
+  // erc20_address is the hex address of ERC20 contract
+  string erc20_address = 1;
+
+  // owner is the hex address of the owner account
+  string owner = 2;
+
+  // spender is the hex address that is allowed to spend the allowance
+  string spender = 3;
+
+  // value specifies the maximum amount of tokens that can be spent
+  // by this token allowance and will be updated as tokens are spent.
+  string value = 4 [
+    (gogoproto.customtype) = "cosmossdk.io/math.Int",
+    (gogoproto.nullable) = false
+  ];
 }
 
 // protolint:disable MESSAGES_HAVE_COMMENT

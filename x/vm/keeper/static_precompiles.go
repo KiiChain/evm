@@ -4,9 +4,10 @@ import (
 	"fmt"
 	"slices"
 
-	"github.com/cosmos/evm/x/vm/core/vm"
-	"github.com/cosmos/evm/x/vm/types"
 	"github.com/ethereum/go-ethereum/common"
+	"github.com/ethereum/go-ethereum/core/vm"
+
+	"github.com/cosmos/evm/x/vm/types"
 )
 
 // WithStaticPrecompiles sets the available static precompiled contracts.
@@ -21,6 +22,14 @@ func (k *Keeper) WithStaticPrecompiles(precompiles map[common.Address]vm.Precomp
 
 	k.precompiles = precompiles
 	return k
+}
+
+// WithStaticPrecompiles sets the available static precompiled contracts.
+func (k *Keeper) RegisterStaticPrecompile(address common.Address, precompile vm.PrecompiledContract) {
+	if k.precompiles == nil {
+		k.precompiles = make(map[common.Address]vm.PrecompiledContract)
+	}
+	k.precompiles[address] = precompile
 }
 
 // GetStaticPrecompileInstance returns the instance of the given static precompile address.
@@ -42,5 +51,5 @@ func (k *Keeper) GetStaticPrecompileInstance(params *types.Params, address commo
 // This function assumes that the Berlin precompiles cannot be disabled.
 func (k Keeper) IsAvailableStaticPrecompile(params *types.Params, address common.Address) bool {
 	return slices.Contains(params.ActiveStaticPrecompiles, address.String()) ||
-		slices.Contains(vm.PrecompiledAddressesBerlin, address)
+		slices.Contains(vm.PrecompiledAddressesPrague, address)
 }

@@ -1,30 +1,42 @@
 package erc20
 
 import (
-	errorsmod "cosmossdk.io/errors"
-	sdk "github.com/cosmos/cosmos-sdk/types"
+	"errors"
 
-	transfertypes "github.com/cosmos/ibc-go/v8/modules/apps/transfer/types"
-	channeltypes "github.com/cosmos/ibc-go/v8/modules/core/04-channel/types"
-	porttypes "github.com/cosmos/ibc-go/v8/modules/core/05-port/types"
-	"github.com/cosmos/ibc-go/v8/modules/core/exported"
-
-	errortypes "github.com/cosmos/cosmos-sdk/types/errors"
 	"github.com/cosmos/evm/ibc"
-	"github.com/cosmos/evm/x/erc20/keeper"
+	erc20types "github.com/cosmos/evm/x/erc20/types"
+	transfertypes "github.com/cosmos/ibc-go/v10/modules/apps/transfer/types"
+	channeltypes "github.com/cosmos/ibc-go/v10/modules/core/04-channel/types"
+	porttypes "github.com/cosmos/ibc-go/v10/modules/core/05-port/types"
+	"github.com/cosmos/ibc-go/v10/modules/core/exported"
+
+	errorsmod "cosmossdk.io/errors"
+
+	sdk "github.com/cosmos/cosmos-sdk/types"
+	errortypes "github.com/cosmos/cosmos-sdk/types/errors"
 )
 
-var _ porttypes.IBCModule = &IBCMiddleware{}
+var (
+	_ porttypes.IBCModule             = &IBCMiddleware{}
+	_ porttypes.PacketDataUnmarshaler = &IBCMiddleware{}
+)
 
 // IBCMiddleware implements the ICS26 callbacks for the transfer middleware given
 // the erc20 keeper and the underlying application.
 type IBCMiddleware struct {
 	*ibc.Module
-	keeper keeper.Keeper
+	keeper erc20types.Erc20Keeper
 }
 
 // NewIBCMiddleware creates a new IBCMiddleware given the keeper and underlying application
-func NewIBCMiddleware(k keeper.Keeper, app porttypes.IBCModule) IBCMiddleware {
+func NewIBCMiddleware(k erc20types.Erc20Keeper, app porttypes.IBCModule) IBCMiddleware {
+	if app == nil {
+		panic(errors.New("underlying application cannot be nil"))
+	}
+	if k == nil {
+		panic(errors.New("erc20 keeper cannot be nil"))
+	}
+
 	return IBCMiddleware{
 		Module: ibc.NewModule(app),
 		keeper: k,
@@ -37,12 +49,14 @@ func NewIBCMiddleware(k keeper.Keeper, app porttypes.IBCModule) IBCMiddleware {
 // representation.
 // If the acknowledgement fails, this callback will default to the ibc-core
 // packet callback.
+// If conversion fails, then the user will receive the bank token instead.
 func (im IBCMiddleware) OnRecvPacket(
 	ctx sdk.Context,
+	channelVersion string,
 	packet channeltypes.Packet,
 	relayer sdk.AccAddress,
 ) exported.Acknowledgement {
-	ack := im.Module.OnRecvPacket(ctx, packet, relayer)
+	ack := im.Module.OnRecvPacket(ctx, channelVersion, packet, relayer)
 
 	// return if the acknowledgement is an error ACK
 	if !ack.Success() {
@@ -57,6 +71,7 @@ func (im IBCMiddleware) OnRecvPacket(
 // Cosmos Coin to their ERC20 token representation.
 func (im IBCMiddleware) OnAcknowledgementPacket(
 	ctx sdk.Context,
+	channelVersion string,
 	packet channeltypes.Packet,
 	acknowledgement []byte,
 	relayer sdk.AccAddress,
@@ -71,7 +86,7 @@ func (im IBCMiddleware) OnAcknowledgementPacket(
 		return errorsmod.Wrapf(errortypes.ErrUnknownRequest, "cannot unmarshal ICS-20 transfer packet data: %s", err.Error())
 	}
 
-	if err := im.Module.OnAcknowledgementPacket(ctx, packet, acknowledgement, relayer); err != nil {
+	if err := im.Module.OnAcknowledgementPacket(ctx, channelVersion, packet, acknowledgement, relayer); err != nil {
 		return err
 	}
 
@@ -83,6 +98,7 @@ func (im IBCMiddleware) OnAcknowledgementPacket(
 // Cosmos Coin to their ERC20 token representation.
 func (im IBCMiddleware) OnTimeoutPacket(
 	ctx sdk.Context,
+	channelVersion string,
 	packet channeltypes.Packet,
 	relayer sdk.AccAddress,
 ) error {
@@ -91,9 +107,18 @@ func (im IBCMiddleware) OnTimeoutPacket(
 		return errorsmod.Wrapf(errortypes.ErrUnknownRequest, "cannot unmarshal ICS-20 transfer packet data: %s", err.Error())
 	}
 
-	if err := im.Module.OnTimeoutPacket(ctx, packet, relayer); err != nil {
+	if err := im.Module.OnTimeoutPacket(ctx, channelVersion, packet, relayer); err != nil {
 		return err
 	}
 
 	return im.keeper.OnTimeoutPacket(ctx, packet, data)
+}
+
+// UnmarshalPacketa implements the PacketDataUnmarshaler interface.
+func (im IBCMiddleware) UnmarshalPacketData(
+	ctx sdk.Context,
+	portID, channelID string,
+	data []byte,
+) (any, string, error) {
+	return im.Module.UnmarshalPacketData(ctx, portID, channelID, data)
 }

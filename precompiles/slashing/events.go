@@ -1,11 +1,13 @@
 package slashing
 
 import (
-	sdk "github.com/cosmos/cosmos-sdk/types"
-	cmn "github.com/cosmos/evm/precompiles/common"
-	"github.com/cosmos/evm/x/vm/core/vm"
 	"github.com/ethereum/go-ethereum/common"
 	ethtypes "github.com/ethereum/go-ethereum/core/types"
+	"github.com/ethereum/go-ethereum/core/vm"
+
+	cmn "github.com/cosmos/evm/precompiles/common"
+
+	sdk "github.com/cosmos/cosmos-sdk/types"
 )
 
 const (
@@ -21,7 +23,7 @@ type EventValidatorUnjailed struct {
 // EmitValidatorUnjailedEvent emits the ValidatorUnjailed event
 func (p Precompile) EmitValidatorUnjailedEvent(ctx sdk.Context, stateDB vm.StateDB, validator common.Address) error {
 	// Prepare the event topics
-	event := p.ABI.Events[EventTypeValidatorUnjailed]
+	event := p.Events[EventTypeValidatorUnjailed]
 	topics := make([]common.Hash, 2)
 
 	// The first topic is always the signature of the event

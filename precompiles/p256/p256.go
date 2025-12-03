@@ -19,10 +19,11 @@ package p256
 import (
 	"math/big"
 
-	"github.com/cosmos/evm/crypto/secp256r1"
-	"github.com/cosmos/evm/x/vm/core/vm"
-	evmtypes "github.com/cosmos/evm/x/vm/types"
 	"github.com/ethereum/go-ethereum/common"
+	"github.com/ethereum/go-ethereum/core/vm"
+
+	"github.com/cosmos/evm/crypto/secp256r1"
+	evmtypes "github.com/cosmos/evm/x/vm/types"
 )
 
 var _ vm.PrecompiledContract = &Precompile{}
@@ -76,7 +77,9 @@ func (p *Precompile) Run(_ *vm.EVM, contract *vm.Contract, _ bool) (bz []byte, e
 	// Verify the secp256r1 signature
 	if secp256r1.Verify(hash, r, s, x, y) {
 		// Signature is valid
-		return common.LeftPadBytes(common.Big1.Bytes(), 32), nil
+		result := make([]byte, 32)
+		common.Big1.FillBytes(result)
+		return result, nil
 	}
 
 	// Signature is invalid

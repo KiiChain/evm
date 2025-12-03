@@ -7,8 +7,9 @@ import (
 	"testing"
 	"time"
 
-	coretypes "github.com/cometbft/cometbft/rpc/core/types"
 	"github.com/stretchr/testify/require"
+
+	coretypes "github.com/cometbft/cometbft/rpc/core/types"
 )
 
 func TestAddTopic(t *testing.T) {
@@ -25,6 +26,52 @@ func TestAddTopic(t *testing.T) {
 	topics := q.Topics()
 	sort.Strings(topics)
 	require.EqualValues(t, []string{"kek", "lol"}, topics)
+}
+
+func TestMaxSubscribers(t *testing.T) {
+	q := NewEventBus(WithMaxSubscribers(2))
+	kekSrc := make(chan coretypes.ResultEvent)
+	err := q.AddTopic("kek", kekSrc)
+	require.NoError(t, err)
+	_, _, err = q.Subscribe("kek")
+	require.NoError(t, err)
+	_, unsub, err := q.Subscribe("kek")
+	require.NoError(t, err)
+
+	_, _, err = q.Subscribe("kek")
+	require.ErrorIs(t, err, ErrTooManySubscribers)
+
+	unsub()
+	_, _, err = q.Subscribe("kek")
+	require.NoError(t, err)
+}
+
+func TestMaxSubscribersUpdatedAfterClose(t *testing.T) {
+	maxSubs, topic := 5, "kek"
+	q := NewEventBus(WithMaxSubscribers(maxSubs))
+	kekSrc := make(chan coretypes.ResultEvent)
+	err := q.AddTopic(topic, kekSrc)
+	require.NoError(t, err)
+	for range maxSubs {
+		_, _, err = q.Subscribe(topic)
+		require.NoError(t, err)
+	}
+	_, _, err = q.Subscribe(topic)
+	require.ErrorIs(t, err, ErrTooManySubscribers)
+	close(kekSrc)
+	time.Sleep(1 * time.Second)
+
+	_, _, err = q.Subscribe(topic)
+	require.ErrorIs(t, err, ErrTopicNotFound)
+
+	// should be able to subscribe back up to maximum after the topic was removed.
+	kekSrc = make(chan coretypes.ResultEvent)
+	err = q.AddTopic(topic, kekSrc)
+	require.NoError(t, err)
+	for range maxSubs {
+		_, _, err = q.Subscribe(topic)
+		require.NoError(t, err)
+	}
 }
 
 func TestSubscribe(t *testing.T) {
@@ -114,6 +161,7 @@ func TestConcurrentSubscribeAndPublish(t *testing.T) {
 }
 
 func subscribeAndPublish(t *testing.T, eb EventBus, topic string, topicChan chan coretypes.ResultEvent) {
+	t.Helper()
 	var (
 		wg               sync.WaitGroup
 		subscribersCount = 50

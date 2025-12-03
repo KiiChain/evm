@@ -5,10 +5,11 @@ import (
 )
 
 // NewGenesisState creates a new genesis state.
-func NewGenesisState(params Params, pairs []TokenPair) GenesisState {
+func NewGenesisState(params Params, pairs []TokenPair, allowances []Allowance) GenesisState {
 	return GenesisState{
 		Params:     params,
 		TokenPairs: pairs,
+		Allowances: allowances,
 	}
 }
 
@@ -18,6 +19,7 @@ func DefaultGenesisState() *GenesisState {
 	return &GenesisState{
 		Params:     DefaultParams(),
 		TokenPairs: []TokenPair{},
+		Allowances: []Allowance{},
 	}
 }
 
@@ -44,19 +46,33 @@ func (gs GenesisState) Validate() error {
 		seenDenom[b.Denom] = true
 	}
 
-	// Check if params are valid
-	if err := gs.Params.Validate(); err != nil {
-		return fmt.Errorf("invalid params on genesis: %w", err)
-	}
-
 	// Check if active precompiles have a corresponding token pair
-	if err := validatePrecompiles(gs.TokenPairs, gs.Params.DynamicPrecompiles); err != nil {
+	if err := validatePrecompiles(gs.TokenPairs, gs.DynamicPrecompiles); err != nil {
 		return fmt.Errorf("invalid dynamic precompiles on genesis: %w", err)
 	}
 
-	if err := validatePrecompiles(gs.TokenPairs, gs.Params.NativePrecompiles); err != nil {
+	if err := validatePrecompiles(gs.TokenPairs, gs.NativePrecompiles); err != nil {
 		return fmt.Errorf("invalid native precompiles on genesis: %w", err)
 	}
+
+	// Check if allowances are valid
+	seenAllowance := make(map[string]bool)
+	for _, a := range gs.Allowances {
+		if seenAllowance[a.Erc20Address+a.Owner+a.Spender] {
+			return fmt.Errorf("duplicated allowance on genesis: %s", a.Erc20Address+a.Owner+a.Spender)
+		}
+
+		if !seenErc20[a.Erc20Address] {
+			return fmt.Errorf("allowance has no corresponding token pair on genesis: %s", a.Erc20Address)
+		}
+
+		if err := a.Validate(); err != nil {
+			return fmt.Errorf("invalid allowance on genesis: %w", err)
+		}
+
+		seenAllowance[a.Erc20Address+a.Owner+a.Spender] = true
+	}
+
 	return nil
 }
 

@@ -6,32 +6,33 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/stretchr/testify/require"
+
+	"github.com/cosmos/evm/encoding"
+	evmaddress "github.com/cosmos/evm/encoding/address"
+	"github.com/cosmos/evm/ethereum/eip712"
 	"github.com/cosmos/evm/testutil/constants"
+	utiltx "github.com/cosmos/evm/testutil/tx"
+	evmtypes "github.com/cosmos/evm/x/vm/types"
 
 	"cosmossdk.io/math"
+
 	"github.com/cosmos/cosmos-sdk/client"
-	"github.com/cosmos/cosmos-sdk/codec/address"
 	codectypes "github.com/cosmos/cosmos-sdk/codec/types"
 	"github.com/cosmos/cosmos-sdk/crypto/keyring"
 	sdk "github.com/cosmos/cosmos-sdk/types"
 	"github.com/cosmos/cosmos-sdk/types/tx/signing"
 	"github.com/cosmos/cosmos-sdk/x/auth/ante"
 	banktypes "github.com/cosmos/cosmos-sdk/x/bank/types"
-	"github.com/cosmos/evm/encoding"
-	"github.com/cosmos/evm/ethereum/eip712"
-	utiltx "github.com/cosmos/evm/testutil/tx"
-	"github.com/cosmos/evm/types"
-	evmtypes "github.com/cosmos/evm/x/vm/types"
-	"github.com/stretchr/testify/require"
 )
 
 // Testing Constants
 var (
 	// chainID is used in EIP-712 tests.
-	chainID = constants.ExampleChainID
+	chainID = uint64(constants.ExampleEIP155ChainID)
 
 	ctx = client.Context{}.WithTxConfig(
-		encoding.MakeConfig().TxConfig,
+		encoding.MakeConfig(chainID).TxConfig,
 	)
 
 	// feePayerAddress is the address of the fee payer used in EIP-712 tests.
@@ -54,6 +55,10 @@ type TestCaseStruct struct {
 func TestLedgerPreprocessing(t *testing.T) {
 	// Update bech32 prefix
 	sdk.GetConfig().SetBech32PrefixForAccount(constants.ExampleBech32Prefix, "")
+	evmConfigurator := evmtypes.NewEVMConfigurator().
+		WithEVMCoinInfo(constants.ExampleChainCoinInfo[constants.ExampleChainID])
+	err := evmConfigurator.Configure()
+	require.NoError(t, err)
 
 	testCases := []TestCaseStruct{
 		createBasicTestCase(t),
@@ -75,7 +80,7 @@ func TestLedgerPreprocessing(t *testing.T) {
 		require.True(t, ok)
 		require.True(t, len(hasExtOptsTx.GetExtensionOptions()) == 1)
 
-		expectedExt := types.ExtensionOptionsWeb3Tx{
+		expectedExt := eip712.ExtensionOptionsWeb3Tx{
 			TypedDataChainID: 9001,
 			FeePayer:         feePayerAddress,
 			FeePayerSig:      tc.expectedSignatureBytes,
@@ -101,9 +106,7 @@ func TestLedgerPreprocessing(t *testing.T) {
 		// Verify tx fields are unchanged
 		tx := tc.txBuilder.GetTx()
 
-		addrCodec := address.Bech32Codec{
-			Bech32Prefix: sdk.GetConfig().GetBech32AccountAddrPrefix(),
-		}
+		addrCodec := evmaddress.NewEvmCodec(sdk.GetConfig().GetBech32AccountAddrPrefix())
 
 		txFeePayer, err := addrCodec.BytesToString(tx.FeePayer())
 		require.NoError(t, err)
@@ -151,7 +154,7 @@ func TestInvalidChainId(t *testing.T) {
 	txBuilder := ctx.TxConfig.NewTxBuilder()
 
 	err := eip712.PreprocessLedgerTx(
-		"invalid-chain-id",
+		0,
 		keyring.TypeLedger,
 		txBuilder,
 	)

@@ -2,13 +2,17 @@ package vm
 
 import (
 	"fmt"
+	"sync"
 
-	abci "github.com/cometbft/cometbft/abci/types"
-	sdk "github.com/cosmos/cosmos-sdk/types"
-	"github.com/cosmos/evm/x/vm/keeper"
-	"github.com/cosmos/evm/x/vm/types"
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/crypto"
+
+	abci "github.com/cometbft/cometbft/abci/types"
+
+	"github.com/cosmos/evm/x/vm/keeper"
+	"github.com/cosmos/evm/x/vm/types"
+
+	sdk "github.com/cosmos/cosmos-sdk/types"
 )
 
 // InitGenesis initializes genesis state based on exported genesis
@@ -16,7 +20,9 @@ func InitGenesis(
 	ctx sdk.Context,
 	k *keeper.Keeper,
 	accountKeeper types.AccountKeeper,
+	bankKeeper types.BankKeeper,
 	data types.GenesisState,
+	initializer *sync.Once,
 ) []abci.ValidatorUpdate {
 	err := k.SetParams(ctx, data.Params)
 	if err != nil {
@@ -52,6 +58,19 @@ func InitGenesis(
 		for _, storage := range account.Storage {
 			k.SetState(ctx, address, common.HexToHash(storage.Key), common.HexToHash(storage.Value).Bytes())
 		}
+	}
+
+	if err := k.InitEvmCoinInfo(ctx); err != nil {
+		panic(fmt.Errorf("error initializing evm coin info: %s", err))
+	}
+
+	coinInfo := k.GetEvmCoinInfo(ctx)
+	initializer.Do(func() {
+		SetGlobalConfigVariables(coinInfo)
+	})
+
+	if err := k.AddPreinstalls(ctx, data.Preinstalls); err != nil {
+		panic(fmt.Errorf("error adding preinstalls: %s", err))
 	}
 
 	return []abci.ValidatorUpdate{}

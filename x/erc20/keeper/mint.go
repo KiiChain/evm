@@ -1,12 +1,13 @@
 package keeper
 
 import (
+	"github.com/cosmos/evm/x/erc20/types"
+
 	errorsmod "cosmossdk.io/errors"
+
 	sdk "github.com/cosmos/cosmos-sdk/types"
 	errortypes "github.com/cosmos/cosmos-sdk/types/errors"
 	banktypes "github.com/cosmos/cosmos-sdk/x/bank/types"
-
-	"github.com/cosmos/evm/x/erc20/types"
 )
 
 // MintingEnabled checks that:
@@ -16,7 +17,7 @@ import (
 //   - bank module transfers are enabled for the Cosmos coin
 func (k Keeper) MintingEnabled(
 	ctx sdk.Context,
-	sender, receiver sdk.AccAddress,
+	receiver sdk.AccAddress,
 	token string,
 ) (types.TokenPair, error) {
 	if !k.IsERC20Enabled(ctx) {
@@ -56,7 +57,7 @@ func (k Keeper) MintingEnabled(
 
 	// check if minting to a recipient address other than the sender is enabled
 	// for for the given coin denom
-	if !sender.Equals(receiver) && !k.bankKeeper.IsSendEnabledCoin(ctx, coin) {
+	if !k.bankKeeper.IsSendEnabledCoin(ctx, coin) {
 		return types.TokenPair{}, errorsmod.Wrapf(
 			banktypes.ErrSendDisabled, "minting '%s' coins to an external address is currently disabled", token,
 		)

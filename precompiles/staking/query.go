@@ -5,13 +5,12 @@ import (
 	"math/big"
 	"strings"
 
-	sdk "github.com/cosmos/cosmos-sdk/types"
-	stakingkeeper "github.com/cosmos/cosmos-sdk/x/staking/keeper"
-	stakingtypes "github.com/cosmos/cosmos-sdk/x/staking/types"
-	"github.com/cosmos/evm/precompiles/authorization"
-	cmn "github.com/cosmos/evm/precompiles/common"
-	"github.com/cosmos/evm/x/vm/core/vm"
 	"github.com/ethereum/go-ethereum/accounts/abi"
+	"github.com/ethereum/go-ethereum/core/vm"
+
+	cmn "github.com/cosmos/evm/precompiles/common"
+
+	sdk "github.com/cosmos/cosmos-sdk/types"
 )
 
 const (
@@ -42,14 +41,12 @@ func (p Precompile) Delegation(
 	method *abi.Method,
 	args []interface{},
 ) ([]byte, error) {
-	req, err := NewDelegationRequest(args)
+	req, err := NewDelegationRequest(args, p.addrCdc)
 	if err != nil {
 		return nil, err
 	}
 
-	queryServer := stakingkeeper.Querier{Keeper: &p.stakingKeeper}
-
-	res, err := queryServer.Delegation(ctx, req)
+	res, err := p.stakingQuerier.Delegation(ctx, req)
 	if err != nil {
 		// If there is no delegation found, return the response with zero values.
 		if strings.Contains(err.Error(), fmt.Sprintf(ErrNoDelegationFound, req.DelegatorAddr, req.ValidatorAddr)) {
@@ -76,14 +73,12 @@ func (p Precompile) UnbondingDelegation(
 	method *abi.Method,
 	args []interface{},
 ) ([]byte, error) {
-	req, err := NewUnbondingDelegationRequest(args)
+	req, err := NewUnbondingDelegationRequest(args, p.addrCdc)
 	if err != nil {
 		return nil, err
 	}
 
-	queryServer := stakingkeeper.Querier{Keeper: &p.stakingKeeper}
-
-	res, err := queryServer.UnbondingDelegation(ctx, req)
+	res, err := p.stakingQuerier.UnbondingDelegation(ctx, req)
 	if err != nil {
 		// return empty unbonding delegation output if the unbonding delegation is not found
 		expError := fmt.Sprintf("unbonding delegation with delegator %s not found for validator %s", req.DelegatorAddr, req.ValidatorAddr)
@@ -110,21 +105,19 @@ func (p Precompile) Validator(
 		return nil, err
 	}
 
-	queryServer := stakingkeeper.Querier{Keeper: &p.stakingKeeper}
-
-	res, err := queryServer.Validator(ctx, req)
+	res, err := p.stakingQuerier.Validator(ctx, req)
 	if err != nil {
 		// return empty validator info if the validator is not found
 		expError := fmt.Sprintf("validator %s not found", req.ValidatorAddr)
 		if strings.Contains(err.Error(), expError) {
-			return method.Outputs.Pack(DefaultValidatorOutput().Validator)
+			return method.Outputs.Pack(DefaultValidatorInfo())
 		}
 		return nil, err
 	}
 
-	out := new(ValidatorOutput).FromResponse(res)
+	validatorInfo := NewValidatorInfoFromResponse(res.Validator)
 
-	return method.Outputs.Pack(out.Validator)
+	return method.Outputs.Pack(validatorInfo)
 }
 
 // Validators returns the validators information with a provided status & pagination (optional).
@@ -139,9 +132,7 @@ func (p Precompile) Validators(
 		return nil, err
 	}
 
-	queryServer := stakingkeeper.Querier{Keeper: &p.stakingKeeper}
-
-	res, err := queryServer.Validators(ctx, req)
+	res, err := p.stakingQuerier.Validators(ctx, req)
 	if err != nil {
 		return nil, err
 	}
@@ -180,14 +171,12 @@ func (p Precompile) Redelegations(
 	_ *vm.Contract,
 	args []interface{},
 ) ([]byte, error) {
-	req, err := NewRedelegationsRequest(method, args)
+	req, err := NewRedelegationsRequest(method, args, p.addrCdc)
 	if err != nil {
 		return nil, err
 	}
 
-	queryServer := stakingkeeper.Querier{Keeper: &p.stakingKeeper}
-
-	res, err := queryServer.Redelegations(ctx, req)
+	res, err := p.stakingQuerier.Redelegations(ctx, req)
 	if err != nil {
 		return nil, err
 	}
@@ -195,34 +184,4 @@ func (p Precompile) Redelegations(
 	out := new(RedelegationsOutput).FromResponse(res)
 
 	return out.Pack(method.Outputs)
-}
-
-// Allowance returns the remaining allowance of a grantee to the contract.
-func (p Precompile) Allowance(
-	ctx sdk.Context,
-	method *abi.Method,
-	_ *vm.Contract,
-	args []interface{},
-) ([]byte, error) {
-	grantee, granter, msg, err := authorization.CheckAllowanceArgs(args)
-	if err != nil {
-		return nil, err
-	}
-
-	msgAuthz, _ := p.AuthzKeeper.GetAuthorization(ctx, grantee.Bytes(), granter.Bytes(), msg)
-
-	if msgAuthz == nil {
-		return method.Outputs.Pack(big.NewInt(0))
-	}
-
-	stakeAuthz, ok := msgAuthz.(*stakingtypes.StakeAuthorization)
-	if !ok {
-		return nil, fmt.Errorf(cmn.ErrInvalidType, "staking authorization", &stakingtypes.StakeAuthorization{}, stakeAuthz)
-	}
-
-	if stakeAuthz.MaxTokens == nil {
-		return method.Outputs.Pack(abi.MaxUint256)
-	}
-
-	return method.Outputs.Pack(stakeAuthz.MaxTokens.Amount.BigInt())
 }

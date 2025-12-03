@@ -5,13 +5,14 @@ import (
 	"math/big"
 	"slices"
 
+	feemarkettypes "github.com/cosmos/evm/x/feemarket/types"
+	evmtypes "github.com/cosmos/evm/x/vm/types"
+
 	errorsmod "cosmossdk.io/errors"
 	"cosmossdk.io/math"
 
 	sdk "github.com/cosmos/cosmos-sdk/types"
 	errortypes "github.com/cosmos/cosmos-sdk/types/errors"
-	anteinterfaces "github.com/cosmos/evm/ante/interfaces"
-	evmtypes "github.com/cosmos/evm/x/vm/types"
 )
 
 // MinGasPriceDecorator will check if the transaction's fee is at least as large
@@ -20,14 +21,13 @@ import (
 // If fee is high enough, then call next AnteHandler
 // CONTRACT: Tx must implement FeeTx to use MinGasPriceDecorator
 type MinGasPriceDecorator struct {
-	feemarketKeeper anteinterfaces.FeeMarketKeeper
-	evmKeeper       anteinterfaces.EVMKeeper
+	feemarketParams *feemarkettypes.Params
 }
 
 // NewMinGasPriceDecorator creates a new MinGasPriceDecorator instance used only for
 // Cosmos transactions.
-func NewMinGasPriceDecorator(fk anteinterfaces.FeeMarketKeeper, ek anteinterfaces.EVMKeeper) MinGasPriceDecorator {
-	return MinGasPriceDecorator{feemarketKeeper: fk, evmKeeper: ek}
+func NewMinGasPriceDecorator(feemarketParams *feemarkettypes.Params) MinGasPriceDecorator {
+	return MinGasPriceDecorator{feemarketParams}
 }
 
 func (mpd MinGasPriceDecorator) AnteHandle(ctx sdk.Context, tx sdk.Tx, simulate bool, next sdk.AnteHandler) (newCtx sdk.Context, err error) {
@@ -36,7 +36,7 @@ func (mpd MinGasPriceDecorator) AnteHandle(ctx sdk.Context, tx sdk.Tx, simulate 
 		return ctx, errorsmod.Wrapf(errortypes.ErrInvalidType, "invalid transaction type %T, expected sdk.FeeTx", tx)
 	}
 
-	minGasPrice := mpd.feemarketKeeper.GetParams(ctx).MinGasPrice
+	minGasPrice := mpd.feemarketParams.MinGasPrice
 
 	feeCoins := feeTx.GetFee()
 	evmDenom := evmtypes.GetEVMCoinDenom()

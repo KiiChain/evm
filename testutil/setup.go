@@ -7,10 +7,11 @@ import (
 	tmproto "github.com/cometbft/cometbft/proto/tendermint/types"
 	tmversion "github.com/cometbft/cometbft/proto/tendermint/version"
 	"github.com/cometbft/cometbft/version"
+
 	sdk "github.com/cosmos/cosmos-sdk/types"
 )
 
-// NewHeader creates a new Tendermint header for testing purposes.
+// NewHeader creates a new CometBFT header for testing purposes.
 func NewHeader(
 	height int64,
 	blockTime time.Time,

@@ -3,14 +3,12 @@ package types_test
 import (
 	"testing"
 
-	sdkmath "cosmossdk.io/math"
-	"github.com/cosmos/evm/x/vm/types"
 	"github.com/stretchr/testify/require"
 
-	"github.com/ethereum/go-ethereum/common"
-)
+	"github.com/cosmos/evm/x/vm/types"
 
-var defaultEIP150Hash = common.Hash{}.String()
+	sdkmath "cosmossdk.io/math"
+)
 
 func newIntPtr(i int64) *sdkmath.Int {
 	v := sdkmath.NewInt(i)
@@ -23,14 +21,13 @@ func TestChainConfigValidate(t *testing.T) {
 		config   types.ChainConfig
 		expError bool
 	}{
-		{"default", *types.DefaultChainConfig(""), false},
+		{"default", *types.DefaultChainConfig(0), false},
 		{
 			"valid",
 			types.ChainConfig{
 				HomesteadBlock:      newIntPtr(0),
 				DAOForkBlock:        newIntPtr(0),
 				EIP150Block:         newIntPtr(0),
-				EIP150Hash:          defaultEIP150Hash,
 				EIP155Block:         newIntPtr(0),
 				EIP158Block:         newIntPtr(0),
 				ByzantiumBlock:      newIntPtr(0),
@@ -40,8 +37,10 @@ func TestChainConfigValidate(t *testing.T) {
 				MuirGlacierBlock:    newIntPtr(0),
 				BerlinBlock:         newIntPtr(0),
 				LondonBlock:         newIntPtr(0),
-				CancunBlock:         newIntPtr(0),
-				ShanghaiBlock:       newIntPtr(0),
+				CancunTime:          newIntPtr(0),
+				ShanghaiTime:        newIntPtr(0),
+				PragueTime:          newIntPtr(0),
+				VerkleTime:          newIntPtr(0),
 			},
 			false,
 		},
@@ -51,7 +50,6 @@ func TestChainConfigValidate(t *testing.T) {
 				HomesteadBlock:      nil,
 				DAOForkBlock:        nil,
 				EIP150Block:         nil,
-				EIP150Hash:          defaultEIP150Hash,
 				EIP155Block:         nil,
 				EIP158Block:         nil,
 				ByzantiumBlock:      nil,
@@ -61,8 +59,8 @@ func TestChainConfigValidate(t *testing.T) {
 				MuirGlacierBlock:    nil,
 				BerlinBlock:         nil,
 				LondonBlock:         nil,
-				CancunBlock:         nil,
-				ShanghaiBlock:       nil,
+				CancunTime:          nil,
+				ShanghaiTime:        nil,
 			},
 			false,
 		},
@@ -96,22 +94,11 @@ func TestChainConfigValidate(t *testing.T) {
 			true,
 		},
 		{
-			"invalid EIP150Hash",
-			types.ChainConfig{
-				HomesteadBlock: newIntPtr(0),
-				DAOForkBlock:   newIntPtr(0),
-				EIP150Block:    newIntPtr(0),
-				EIP150Hash:     "  ",
-			},
-			true,
-		},
-		{
 			"invalid EIP155Block",
 			types.ChainConfig{
 				HomesteadBlock: newIntPtr(0),
 				DAOForkBlock:   newIntPtr(0),
 				EIP150Block:    newIntPtr(0),
-				EIP150Hash:     defaultEIP150Hash,
 				EIP155Block:    newIntPtr(-1),
 			},
 			true,
@@ -122,7 +109,6 @@ func TestChainConfigValidate(t *testing.T) {
 				HomesteadBlock: newIntPtr(0),
 				DAOForkBlock:   newIntPtr(0),
 				EIP150Block:    newIntPtr(0),
-				EIP150Hash:     defaultEIP150Hash,
 				EIP155Block:    newIntPtr(0),
 				EIP158Block:    newIntPtr(-1),
 			},
@@ -134,7 +120,6 @@ func TestChainConfigValidate(t *testing.T) {
 				HomesteadBlock: newIntPtr(0),
 				DAOForkBlock:   newIntPtr(0),
 				EIP150Block:    newIntPtr(0),
-				EIP150Hash:     defaultEIP150Hash,
 				EIP155Block:    newIntPtr(0),
 				EIP158Block:    newIntPtr(0),
 				ByzantiumBlock: newIntPtr(-1),
@@ -147,7 +132,6 @@ func TestChainConfigValidate(t *testing.T) {
 				HomesteadBlock:      newIntPtr(0),
 				DAOForkBlock:        newIntPtr(0),
 				EIP150Block:         newIntPtr(0),
-				EIP150Hash:          defaultEIP150Hash,
 				EIP155Block:         newIntPtr(0),
 				EIP158Block:         newIntPtr(0),
 				ByzantiumBlock:      newIntPtr(0),
@@ -161,7 +145,6 @@ func TestChainConfigValidate(t *testing.T) {
 				HomesteadBlock:      newIntPtr(0),
 				DAOForkBlock:        newIntPtr(0),
 				EIP150Block:         newIntPtr(0),
-				EIP150Hash:          defaultEIP150Hash,
 				EIP155Block:         newIntPtr(0),
 				EIP158Block:         newIntPtr(0),
 				ByzantiumBlock:      newIntPtr(0),
@@ -176,7 +159,6 @@ func TestChainConfigValidate(t *testing.T) {
 				HomesteadBlock:      newIntPtr(0),
 				DAOForkBlock:        newIntPtr(0),
 				EIP150Block:         newIntPtr(0),
-				EIP150Hash:          defaultEIP150Hash,
 				EIP155Block:         newIntPtr(0),
 				EIP158Block:         newIntPtr(0),
 				ByzantiumBlock:      newIntPtr(0),
@@ -192,7 +174,6 @@ func TestChainConfigValidate(t *testing.T) {
 				HomesteadBlock:      newIntPtr(0),
 				DAOForkBlock:        newIntPtr(0),
 				EIP150Block:         newIntPtr(0),
-				EIP150Hash:          defaultEIP150Hash,
 				EIP155Block:         newIntPtr(0),
 				EIP158Block:         newIntPtr(0),
 				ByzantiumBlock:      newIntPtr(0),
@@ -209,7 +190,6 @@ func TestChainConfigValidate(t *testing.T) {
 				HomesteadBlock:      newIntPtr(0),
 				DAOForkBlock:        newIntPtr(0),
 				EIP150Block:         newIntPtr(0),
-				EIP150Hash:          defaultEIP150Hash,
 				EIP155Block:         newIntPtr(0),
 				EIP158Block:         newIntPtr(0),
 				ByzantiumBlock:      newIntPtr(0),
@@ -227,7 +207,6 @@ func TestChainConfigValidate(t *testing.T) {
 				HomesteadBlock:      newIntPtr(0),
 				DAOForkBlock:        newIntPtr(0),
 				EIP150Block:         newIntPtr(0),
-				EIP150Hash:          defaultEIP150Hash,
 				EIP155Block:         newIntPtr(0),
 				EIP158Block:         newIntPtr(0),
 				ByzantiumBlock:      newIntPtr(0),
@@ -246,7 +225,6 @@ func TestChainConfigValidate(t *testing.T) {
 				HomesteadBlock:      newIntPtr(0),
 				DAOForkBlock:        newIntPtr(0),
 				EIP150Block:         newIntPtr(0),
-				EIP150Hash:          defaultEIP150Hash,
 				EIP155Block:         newIntPtr(0),
 				EIP158Block:         newIntPtr(0),
 				ByzantiumBlock:      newIntPtr(0),
@@ -266,7 +244,6 @@ func TestChainConfigValidate(t *testing.T) {
 				HomesteadBlock:      newIntPtr(0),
 				DAOForkBlock:        newIntPtr(0),
 				EIP150Block:         newIntPtr(0),
-				EIP150Hash:          defaultEIP150Hash,
 				EIP155Block:         newIntPtr(0),
 				EIP158Block:         newIntPtr(0),
 				ByzantiumBlock:      newIntPtr(0),
@@ -287,7 +264,6 @@ func TestChainConfigValidate(t *testing.T) {
 				HomesteadBlock:      newIntPtr(0),
 				DAOForkBlock:        newIntPtr(0),
 				EIP150Block:         newIntPtr(0),
-				EIP150Hash:          defaultEIP150Hash,
 				EIP155Block:         newIntPtr(0),
 				EIP158Block:         newIntPtr(0),
 				ByzantiumBlock:      newIntPtr(0),
@@ -308,7 +284,6 @@ func TestChainConfigValidate(t *testing.T) {
 			types.ChainConfig{
 				DAOForkBlock:        newIntPtr(0),
 				EIP150Block:         newIntPtr(0),
-				EIP150Hash:          defaultEIP150Hash,
 				EIP155Block:         newIntPtr(0),
 				EIP158Block:         newIntPtr(0),
 				ByzantiumBlock:      newIntPtr(0),
@@ -322,12 +297,11 @@ func TestChainConfigValidate(t *testing.T) {
 			true,
 		},
 		{
-			"invalid ShanghaiBlock",
+			"invalid ShanghaiTime",
 			types.ChainConfig{
 				HomesteadBlock:      newIntPtr(0),
 				DAOForkBlock:        newIntPtr(0),
 				EIP150Block:         newIntPtr(0),
-				EIP150Hash:          defaultEIP150Hash,
 				EIP155Block:         newIntPtr(0),
 				EIP158Block:         newIntPtr(0),
 				ByzantiumBlock:      newIntPtr(0),
@@ -340,17 +314,16 @@ func TestChainConfigValidate(t *testing.T) {
 				ArrowGlacierBlock:   newIntPtr(0),
 				GrayGlacierBlock:    newIntPtr(0),
 				MergeNetsplitBlock:  newIntPtr(0),
-				ShanghaiBlock:       newIntPtr(-1),
+				ShanghaiTime:        newIntPtr(-1),
 			},
 			true,
 		},
 		{
-			"invalid CancunBlock",
+			"invalid CancunTime",
 			types.ChainConfig{
 				HomesteadBlock:      newIntPtr(0),
 				DAOForkBlock:        newIntPtr(0),
 				EIP150Block:         newIntPtr(0),
-				EIP150Hash:          defaultEIP150Hash,
 				EIP155Block:         newIntPtr(0),
 				EIP158Block:         newIntPtr(0),
 				ByzantiumBlock:      newIntPtr(0),
@@ -363,8 +336,8 @@ func TestChainConfigValidate(t *testing.T) {
 				ArrowGlacierBlock:   newIntPtr(0),
 				GrayGlacierBlock:    newIntPtr(0),
 				MergeNetsplitBlock:  newIntPtr(0),
-				ShanghaiBlock:       newIntPtr(0),
-				CancunBlock:         newIntPtr(-1),
+				ShanghaiTime:        newIntPtr(0),
+				CancunTime:          newIntPtr(-1),
 			},
 			true,
 		},

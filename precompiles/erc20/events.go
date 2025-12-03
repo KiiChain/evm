@@ -3,26 +3,28 @@ package erc20
 import (
 	"math/big"
 
-	sdk "github.com/cosmos/cosmos-sdk/types"
-
-	"github.com/cosmos/evm/x/vm/core/vm"
 	"github.com/ethereum/go-ethereum/accounts/abi"
 	"github.com/ethereum/go-ethereum/common"
 	ethtypes "github.com/ethereum/go-ethereum/core/types"
+	"github.com/ethereum/go-ethereum/core/vm"
 
-	auth "github.com/cosmos/evm/precompiles/authorization"
 	cmn "github.com/cosmos/evm/precompiles/common"
+
+	sdk "github.com/cosmos/cosmos-sdk/types"
 )
 
 const (
 	// EventTypeTransfer defines the event type for the ERC-20 Transfer and TransferFrom transactions.
 	EventTypeTransfer = "Transfer"
+
+	// EventTypeApproval defines the event type for the ERC-20 Approval event.
+	EventTypeApproval = "Approval"
 )
 
 // EmitTransferEvent creates a new Transfer event emitted on transfer and transferFrom transactions.
 func (p Precompile) EmitTransferEvent(ctx sdk.Context, stateDB vm.StateDB, from, to common.Address, value *big.Int) error {
 	// Prepare the event topics
-	event := p.ABI.Events[EventTypeTransfer]
+	event := p.Events[EventTypeTransfer]
 	topics := make([]common.Hash, 3)
 
 	// The first topic is always the signature of the event.
@@ -55,11 +57,10 @@ func (p Precompile) EmitTransferEvent(ctx sdk.Context, stateDB vm.StateDB, from,
 	return nil
 }
 
-// EmitApprovalEvent creates a new approval event emitted on Approve, IncreaseAllowance
-// and DecreaseAllowance transactions.
+// EmitApprovalEvent creates a new approval event emitted on Approve transactions.
 func (p Precompile) EmitApprovalEvent(ctx sdk.Context, stateDB vm.StateDB, owner, spender common.Address, value *big.Int) error {
 	// Prepare the event topics
-	event := p.ABI.Events[auth.EventTypeApproval]
+	event := p.Events[EventTypeApproval]
 	topics := make([]common.Hash, 3)
 
 	// The first topic is always the signature of the event.
