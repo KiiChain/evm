@@ -35,12 +35,12 @@ func (k *Keeper) GetEthIntrinsicGas(ctx sdk.Context, msg core.Message, cfg *para
 // consumed in the transaction. Additionally, the function sets the total gas consumed to the value
 // returned by the EVM execution, thus ignoring the previous intrinsic gas consumed during in the
 // AnteHandler.
-func (k *Keeper) RefundGas(ctx sdk.Context, msg core.Message, leftoverGas uint64, denom string) error {
+func (k *Keeper) RefundGas(ctx sdk.Context, msg core.Message, leftoverGas uint64, gasUsed uint64, denom string) error {
 	// Return EVM tokens for remaining gas, exchanged at the original rate.
 	remaining := new(big.Int).Mul(new(big.Int).SetUint64(leftoverGas), msg.GasPrice)
 
 	// Check if gas is zero
-	if msg.Gas() == 0 {
+	if gasUsed == 0 {
 		// If gas is zero, we cannot refund anything, so we return early
 		return nil
 	}
@@ -72,7 +72,7 @@ func (k *Keeper) RefundGas(ctx sdk.Context, msg core.Message, leftoverGas uint64
 				// remaining = amount * leftoverGas / gasUsed
 				remaining = new(big.Int).Div(
 					new(big.Int).Mul(amount, new(big.Int).SetUint64(leftoverGas)),
-					new(big.Int).SetUint64(msg.Gas()),
+					new(big.Int).SetUint64(gasUsed),
 				)
 			}
 		}
