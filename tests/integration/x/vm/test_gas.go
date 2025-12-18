@@ -1,19 +1,16 @@
-package keeper_test
+package vm
 
 import (
 	"math/big"
 
 	sdkmath "cosmossdk.io/math"
 	sdk "github.com/cosmos/cosmos-sdk/types"
-	authtypes "github.com/cosmos/cosmos-sdk/x/auth/types"
-	govtypes "github.com/cosmos/cosmos-sdk/x/gov/types"
-	"github.com/cosmos/evm/testutil/integration/os/factory"
-	"github.com/cosmos/evm/testutil/integration/os/grpc"
-	testkeyring "github.com/cosmos/evm/testutil/integration/os/keyring"
-	erc20mocks "github.com/cosmos/evm/x/erc20/types/mocks"
+	"github.com/cosmos/evm/testutil/integration/evm/factory"
+	"github.com/cosmos/evm/testutil/integration/evm/grpc"
+	testkeyring "github.com/cosmos/evm/testutil/keyring"
 	"github.com/cosmos/evm/x/vm/keeper"
 	"github.com/cosmos/evm/x/vm/types"
-	"go.uber.org/mock/gomock"
+	"github.com/ethereum/go-ethereum/params"
 )
 
 const (
@@ -25,8 +22,8 @@ const (
 // The gas part on the name refers to the file name to not generate a duplicated test name
 func (suite *KeeperTestSuite) TestGasRefundGas() {
 	// Create a txFactory
-	grpcHandler := grpc.NewIntegrationHandler(suite.network)
-	txFactory := factory.New(suite.network, grpcHandler)
+	grpcHandler := grpc.NewIntegrationHandler(suite.Network)
+	txFactory := factory.New(suite.Network, grpcHandler)
 
 	// Create a core message to use for the test
 	keyring := testkeyring.New(2)
@@ -54,21 +51,21 @@ func (suite *KeeperTestSuite) TestGasRefundGas() {
 			name:        "Refund the full value as no gas was used",
 			leftoverGas: DefaultCoreMsgGasUsage,
 			expectedRefund: sdk.NewCoins(
-				sdk.NewCoin(suite.network.GetBaseDenom(), sdkmath.NewInt(DefaultCoreMsgGasUsage*DefaultGasPrice)),
+				sdk.NewCoin(suite.Network.GetBaseDenom(), sdkmath.NewInt(DefaultCoreMsgGasUsage*DefaultGasPrice)),
 			),
 		},
 		{
 			name:        "Refund half the value as half gas was used",
 			leftoverGas: DefaultCoreMsgGasUsage / 2,
 			expectedRefund: sdk.NewCoins(
-				sdk.NewCoin(suite.network.GetBaseDenom(), sdkmath.NewInt((DefaultCoreMsgGasUsage*DefaultGasPrice)/2)),
+				sdk.NewCoin(suite.Network.GetBaseDenom(), sdkmath.NewInt((DefaultCoreMsgGasUsage*DefaultGasPrice)/2)),
 			),
 		},
 		{
 			name:        "No refund as no gas was left over used",
 			leftoverGas: 0,
 			expectedRefund: sdk.NewCoins(
-				sdk.NewCoin(suite.network.GetBaseDenom(), sdkmath.NewInt(0)),
+				sdk.NewCoin(suite.Network.GetBaseDenom(), sdkmath.NewInt(0)),
 			),
 		},
 		{
@@ -143,54 +140,28 @@ func (suite *KeeperTestSuite) TestGasRefundGas() {
 	for _, tc := range testCases {
 		suite.Run(tc.name, func() {
 			// Generate a cached context to not leak data between tests
-			ctx, _ := suite.network.GetContext().CacheContext()
-
-			// Create a new controller for the mock
-			ctrl := gomock.NewController(suite.T())
-			defer ctrl.Finish()
+			ctx, _ := suite.Network.GetContext().CacheContext()
 
 			// Apply the malleate function to the context
 			if tc.malleate != nil {
 				ctx = tc.malleate(ctx)
 			}
 
-			// Create a new mock bank keeper
-			mockBankKeeper := erc20mocks.NewMockBankKeeper(ctrl)
+			vmdb := suite.Network.GetStateDB()
+			vmdb.AddRefund(params.TxGas)
 
-			// Apply the expect, but only if expected refund is not zero
-			if !tc.expectedRefund.IsZero() {
-				mockBankKeeper.EXPECT().SendCoinsFromModuleToAccount(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
-					DoAndReturn(func(ctx sdk.Context, senderModule string, recipient sdk.AccAddress, coins sdk.Coins) error {
-						if !coins.Equal(tc.expectedRefund) {
-							suite.T().Errorf("expected %s, got %s", tc.expectedRefund, coins)
-						}
-
-						return nil
-					})
+			if tc.leftoverGas > DefaultCoreMsgGasUsage {
+				return
 			}
 
-			// Initialize a new EVM keeper with the mock bank keeper
-			// We need to redo this every time, since we will apply the mocked bank keeper at this step
-			evmKeeper := keeper.NewKeeper(
-				suite.network.App.AppCodec(),
-				suite.network.App.GetKey(types.StoreKey),
-				suite.network.App.GetTKey(types.StoreKey),
-				authtypes.NewModuleAddress(govtypes.ModuleName),
-				suite.network.App.AccountKeeper,
-				mockBankKeeper,
-				suite.network.App.StakingKeeper,
-				suite.network.App.FeeMarketKeeper,
-				suite.network.App.Erc20Keeper,
-				"",
-				suite.network.App.GetSubspace(types.ModuleName),
-			)
+			gasUsed := DefaultCoreMsgGasUsage - tc.leftoverGas
 
-			// Call the msg, not further checks are needed, all balance checks are done in the mock
-			err := evmKeeper.RefundGas(
-				ctx,
-				coreMsg,
+			err = suite.Network.App.GetEVMKeeper().RefundGas(
+				suite.Network.GetContext(),
+				*coreMsg,
 				tc.leftoverGas,
-				suite.network.GetBaseDenom(),
+				gasUsed,
+				suite.Network.GetBaseDenom(),
 			)
 
 			// Check the error
