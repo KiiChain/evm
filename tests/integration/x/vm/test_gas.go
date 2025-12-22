@@ -3,17 +3,20 @@ package vm
 import (
 	"math/big"
 
-	sdkmath "cosmossdk.io/math"
-	sdk "github.com/cosmos/cosmos-sdk/types"
-	authtypes "github.com/cosmos/cosmos-sdk/x/auth/types"
-	banktypes "github.com/cosmos/cosmos-sdk/x/bank/types"
+	"github.com/ethereum/go-ethereum/params"
+
 	"github.com/cosmos/evm/testutil/integration/evm/factory"
 	"github.com/cosmos/evm/testutil/integration/evm/grpc"
 	"github.com/cosmos/evm/testutil/integration/evm/network"
 	testkeyring "github.com/cosmos/evm/testutil/keyring"
 	"github.com/cosmos/evm/x/vm/keeper"
 	"github.com/cosmos/evm/x/vm/types"
-	"github.com/ethereum/go-ethereum/params"
+
+	sdkmath "cosmossdk.io/math"
+
+	sdk "github.com/cosmos/cosmos-sdk/types"
+	authtypes "github.com/cosmos/cosmos-sdk/x/auth/types"
+	banktypes "github.com/cosmos/cosmos-sdk/x/bank/types"
 )
 
 const (
@@ -41,9 +44,11 @@ func (suite *KeeperTestSuite) TestGasRefundGas() {
 			sdkmath.NewInt(6e18),
 		),
 	)
+	feeAddress := authtypes.NewModuleAddress(authtypes.FeeCollectorName)
+
 	balances := []banktypes.Balance{
 		{
-			Address: authtypes.NewModuleAddress(authtypes.FeeCollectorName).String(),
+			Address: feeAddress.String(),
 			Coins:   coins,
 		},
 	}
@@ -105,8 +110,8 @@ func (suite *KeeperTestSuite) TestGasRefundGas() {
 			),
 		},
 		{
-			name:        "Refund with context fees, refunding the almost full value",
-			leftoverGas: DefaultCoreMsgGasUsage - 1,
+			name:        "Refund with context fees, refunding the full value",
+			leftoverGas: DefaultCoreMsgGasUsage,
 			malleate: func(ctx sdk.Context) sdk.Context {
 				// Set the fee abstraction paid fee key with a single coin
 				return ctx.WithValue(
@@ -165,9 +170,6 @@ func (suite *KeeperTestSuite) TestGasRefundGas() {
 					),
 				)
 			},
-			expectedRefund: sdk.NewCoins(
-				sdk.NewCoin(TestDenom, sdkmath.NewInt(0)), // We say as zero to skip the mock bank check
-			),
 			errContains: "expected a single coin for EVM refunds, got 2",
 		},
 	}
@@ -190,13 +192,15 @@ func (suite *KeeperTestSuite) TestGasRefundGas() {
 				return
 			}
 
-			gasUsed := DefaultCoreMsgGasUsage - tc.leftoverGas
+			initialBalances := unitNetwork.App.GetBankKeeper().GetAllBalances(ctx, feeAddress)
+
+			// gasUsed := DefaultCoreMsgGasUsage - tc.leftoverGas
 
 			err = unitNetwork.App.GetEVMKeeper().RefundGas(
 				ctx,
 				*coreMsg,
 				tc.leftoverGas,
-				gasUsed,
+				DefaultCoreMsgGasUsage,
 				baseDenom,
 			)
 
@@ -206,7 +210,14 @@ func (suite *KeeperTestSuite) TestGasRefundGas() {
 			} else {
 				suite.Require().NoError(err, "RefundGas should not return an error")
 			}
+
+			// Check the balance change
+			if !tc.expectedRefund.Empty() {
+				diff := initialBalances.Sub(unitNetwork.App.GetBankKeeper().GetAllBalances(ctx, feeAddress)...)
+				for _, coin := range tc.expectedRefund {
+					suite.Require().Equal(coin.Amount, diff.AmountOf(coin.Denom))
+				}
+			}
 		})
 	}
-
 }
