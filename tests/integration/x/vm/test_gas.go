@@ -19,6 +19,7 @@ import (
 const (
 	DefaultCoreMsgGasUsage = 21000
 	DefaultGasPrice        = 120000
+	TestDenom              = "acoin"
 )
 
 // TestGasRefundGas tests the refund gas exclusively without going though the state transition
@@ -30,10 +31,16 @@ func (suite *KeeperTestSuite) TestGasRefundGas() {
 	// feecollector account to remain funded
 	baseDenom := types.GetEVMCoinDenom()
 
-	coins := sdk.NewCoins(sdk.NewCoin(
-		baseDenom,
-		sdkmath.NewInt(6e18),
-	))
+	coins := sdk.NewCoins(
+		sdk.NewCoin(
+			baseDenom,
+			sdkmath.NewInt(6e18),
+		),
+		sdk.NewCoin(
+			TestDenom,
+			sdkmath.NewInt(6e18),
+		),
+	)
 	balances := []banktypes.Balance{
 		{
 			Address: authtypes.NewModuleAddress(authtypes.FeeCollectorName).String(),
@@ -98,19 +105,19 @@ func (suite *KeeperTestSuite) TestGasRefundGas() {
 			),
 		},
 		{
-			name:        "Refund with context fees, refunding the full value",
-			leftoverGas: DefaultCoreMsgGasUsage,
+			name:        "Refund with context fees, refunding the almost full value",
+			leftoverGas: DefaultCoreMsgGasUsage - 1,
 			malleate: func(ctx sdk.Context) sdk.Context {
 				// Set the fee abstraction paid fee key with a single coin
 				return ctx.WithValue(
 					keeper.ContextPaidFeesKey{},
 					sdk.NewCoins(
-						sdk.NewCoin("acoin", sdkmath.NewInt(750_000_000)),
+						sdk.NewCoin(TestDenom, sdkmath.NewInt(750_000_000)),
 					),
 				)
 			},
 			expectedRefund: sdk.NewCoins(
-				sdk.NewCoin("acoin", sdkmath.NewInt(750_000_000)),
+				sdk.NewCoin(TestDenom, sdkmath.NewInt(750_000_000)),
 			),
 		},
 		{
@@ -121,28 +128,28 @@ func (suite *KeeperTestSuite) TestGasRefundGas() {
 				return ctx.WithValue(
 					keeper.ContextPaidFeesKey{},
 					sdk.NewCoins(
-						sdk.NewCoin("acoin", sdkmath.NewInt(750_000_000)),
+						sdk.NewCoin(TestDenom, sdkmath.NewInt(750_000_000)),
 					),
 				)
 			},
 			expectedRefund: sdk.NewCoins(
-				sdk.NewCoin("acoin", sdkmath.NewInt(750_000_000/2)),
+				sdk.NewCoin(TestDenom, sdkmath.NewInt(750_000_000/2)),
 			),
 		},
 		{
 			name:        "Refund with context fees, no refund",
-			leftoverGas: 0,
+			leftoverGas: 1,
 			malleate: func(ctx sdk.Context) sdk.Context {
 				// Set the fee abstraction paid fee key with a single coin
 				return ctx.WithValue(
 					keeper.ContextPaidFeesKey{},
 					sdk.NewCoins(
-						sdk.NewCoin("acoin", sdkmath.NewInt(750_000_000)),
+						sdk.NewCoin(TestDenom, sdkmath.NewInt(750_000_000)),
 					),
 				)
 			},
 			expectedRefund: sdk.NewCoins(
-				sdk.NewCoin("acoin", sdkmath.NewInt(0)),
+				sdk.NewCoin(TestDenom, sdkmath.NewInt(0)),
 			),
 		},
 		{
@@ -153,13 +160,13 @@ func (suite *KeeperTestSuite) TestGasRefundGas() {
 				return ctx.WithValue(
 					keeper.ContextPaidFeesKey{},
 					sdk.NewCoins(
-						sdk.NewCoin("acoin", sdkmath.NewInt(750_000_000)),
+						sdk.NewCoin(TestDenom, sdkmath.NewInt(750_000_000)),
 						sdk.NewCoin("atwo", sdkmath.NewInt(750_000_000)),
 					),
 				)
 			},
 			expectedRefund: sdk.NewCoins(
-				sdk.NewCoin("acoin", sdkmath.NewInt(0)), // We say as zero to skip the mock bank check
+				sdk.NewCoin(TestDenom, sdkmath.NewInt(0)), // We say as zero to skip the mock bank check
 			),
 			errContains: "expected a single coin for EVM refunds, got 2",
 		},
@@ -186,7 +193,7 @@ func (suite *KeeperTestSuite) TestGasRefundGas() {
 			gasUsed := DefaultCoreMsgGasUsage - tc.leftoverGas
 
 			err = unitNetwork.App.GetEVMKeeper().RefundGas(
-				unitNetwork.GetContext(),
+				ctx,
 				*coreMsg,
 				tc.leftoverGas,
 				gasUsed,
