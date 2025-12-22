@@ -194,8 +194,6 @@ func (suite *KeeperTestSuite) TestGasRefundGas() {
 
 			initialBalances := unitNetwork.App.GetBankKeeper().GetAllBalances(ctx, feeAddress)
 
-			// gasUsed := DefaultCoreMsgGasUsage - tc.leftoverGas
-
 			err = unitNetwork.App.GetEVMKeeper().RefundGas(
 				ctx,
 				*coreMsg,
