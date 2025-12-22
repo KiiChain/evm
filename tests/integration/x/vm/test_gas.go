@@ -154,7 +154,7 @@ func (suite *KeeperTestSuite) TestGasRefundGas() {
 		},
 		{
 			name:        "Error - More than one coin being passed",
-			leftoverGas: DefaultCoreMsgGasUsage,
+			leftoverGas: DefaultCoreMsgGasUsage - 1, // Using some leftover so the refund doesn't short circuit
 			malleate: func(ctx sdk.Context) sdk.Context {
 				// Set the fee abstraction paid fee key with a single coin
 				return ctx.WithValue(
