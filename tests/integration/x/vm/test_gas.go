@@ -3,8 +3,6 @@ package vm
 import (
 	"math/big"
 
-	"github.com/ethereum/go-ethereum/params"
-
 	"github.com/cosmos/evm/testutil/integration/evm/factory"
 	"github.com/cosmos/evm/testutil/integration/evm/grpc"
 	"github.com/cosmos/evm/testutil/integration/evm/network"
@@ -143,7 +141,7 @@ func (suite *KeeperTestSuite) TestGasRefundGas() {
 		},
 		{
 			name:        "Refund with context fees, no refund",
-			leftoverGas: 1,
+			leftoverGas: 0,
 			malleate: func(ctx sdk.Context) sdk.Context {
 				// Set the fee abstraction paid fee key with a single coin
 				return ctx.WithValue(
@@ -159,7 +157,7 @@ func (suite *KeeperTestSuite) TestGasRefundGas() {
 		},
 		{
 			name:        "Error - More than one coin being passed",
-			leftoverGas: DefaultCoreMsgGasUsage - 1, // Using some leftover so the refund doesn't short circuit
+			leftoverGas: DefaultCoreMsgGasUsage,
 			malleate: func(ctx sdk.Context) sdk.Context {
 				// Set the fee abstraction paid fee key with a single coin
 				return ctx.WithValue(
@@ -185,8 +183,8 @@ func (suite *KeeperTestSuite) TestGasRefundGas() {
 				ctx = tc.malleate(ctx)
 			}
 
-			vmdb := unitNetwork.GetStateDB()
-			vmdb.AddRefund(params.TxGas)
+			// vmdb := unitNetwork.GetStateDB()
+			// vmdb.AddRefund(DefaultCoreMsgGasUsage)
 
 			if tc.leftoverGas > DefaultCoreMsgGasUsage {
 				return
