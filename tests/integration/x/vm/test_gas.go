@@ -183,9 +183,6 @@ func (suite *KeeperTestSuite) TestGasRefundGas() {
 				ctx = tc.malleate(ctx)
 			}
 
-			// vmdb := unitNetwork.GetStateDB()
-			// vmdb.AddRefund(DefaultCoreMsgGasUsage)
-
 			if tc.leftoverGas > DefaultCoreMsgGasUsage {
 				return
 			}
