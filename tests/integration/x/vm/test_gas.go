@@ -5,8 +5,11 @@ import (
 
 	sdkmath "cosmossdk.io/math"
 	sdk "github.com/cosmos/cosmos-sdk/types"
+	authtypes "github.com/cosmos/cosmos-sdk/x/auth/types"
+	banktypes "github.com/cosmos/cosmos-sdk/x/bank/types"
 	"github.com/cosmos/evm/testutil/integration/evm/factory"
 	"github.com/cosmos/evm/testutil/integration/evm/grpc"
+	"github.com/cosmos/evm/testutil/integration/evm/network"
 	testkeyring "github.com/cosmos/evm/testutil/keyring"
 	"github.com/cosmos/evm/x/vm/keeper"
 	"github.com/cosmos/evm/x/vm/types"
@@ -21,12 +24,38 @@ const (
 // TestGasRefundGas tests the refund gas exclusively without going though the state transition
 // The gas part on the name refers to the file name to not generate a duplicated test name
 func (suite *KeeperTestSuite) TestGasRefundGas() {
+	// FeeCollector account is pre-funded with enough tokens
+	// for refund to work
+	// NOTE: everything should happen within the same block for
+	// feecollector account to remain funded
+	baseDenom := types.GetEVMCoinDenom()
+
+	coins := sdk.NewCoins(sdk.NewCoin(
+		baseDenom,
+		sdkmath.NewInt(6e18),
+	))
+	balances := []banktypes.Balance{
+		{
+			Address: authtypes.NewModuleAddress(authtypes.FeeCollectorName).String(),
+			Coins:   coins,
+		},
+	}
+	bankGenesis := banktypes.DefaultGenesisState()
+	bankGenesis.Balances = balances
+	customGenesis := network.CustomGenesisState{}
+	customGenesis[banktypes.ModuleName] = bankGenesis
+
 	// Create a txFactory
-	grpcHandler := grpc.NewIntegrationHandler(suite.Network)
-	txFactory := factory.New(suite.Network, grpcHandler)
+	keyring := testkeyring.New(2)
+	unitNetwork := network.NewUnitTestNetwork(
+		suite.Create,
+		network.WithPreFundedAccounts(keyring.GetAllAccAddrs()...),
+		network.WithCustomGenesis(customGenesis),
+	)
+	grpcHandler := grpc.NewIntegrationHandler(unitNetwork)
+	txFactory := factory.New(unitNetwork, grpcHandler)
 
 	// Create a core message to use for the test
-	keyring := testkeyring.New(2)
 	sender := keyring.GetKey(0)
 	recipient := keyring.GetAddr(1)
 	coreMsg, err := txFactory.GenerateGethCoreMsg(
@@ -34,7 +63,7 @@ func (suite *KeeperTestSuite) TestGasRefundGas() {
 		types.EvmTxArgs{
 			To:       &recipient,
 			Amount:   big.NewInt(100),
-			GasPrice: big.NewInt(120000),
+			GasPrice: big.NewInt(DefaultGasPrice),
 		},
 	)
 	suite.Require().NoError(err)
@@ -51,21 +80,21 @@ func (suite *KeeperTestSuite) TestGasRefundGas() {
 			name:        "Refund the full value as no gas was used",
 			leftoverGas: DefaultCoreMsgGasUsage,
 			expectedRefund: sdk.NewCoins(
-				sdk.NewCoin(suite.Network.GetBaseDenom(), sdkmath.NewInt(DefaultCoreMsgGasUsage*DefaultGasPrice)),
+				sdk.NewCoin(baseDenom, sdkmath.NewInt(DefaultCoreMsgGasUsage*DefaultGasPrice)),
 			),
 		},
 		{
 			name:        "Refund half the value as half gas was used",
 			leftoverGas: DefaultCoreMsgGasUsage / 2,
 			expectedRefund: sdk.NewCoins(
-				sdk.NewCoin(suite.Network.GetBaseDenom(), sdkmath.NewInt((DefaultCoreMsgGasUsage*DefaultGasPrice)/2)),
+				sdk.NewCoin(baseDenom, sdkmath.NewInt((DefaultCoreMsgGasUsage*DefaultGasPrice)/2)),
 			),
 		},
 		{
 			name:        "No refund as no gas was left over used",
 			leftoverGas: 0,
 			expectedRefund: sdk.NewCoins(
-				sdk.NewCoin(suite.Network.GetBaseDenom(), sdkmath.NewInt(0)),
+				sdk.NewCoin(baseDenom, sdkmath.NewInt(0)),
 			),
 		},
 		{
@@ -140,14 +169,14 @@ func (suite *KeeperTestSuite) TestGasRefundGas() {
 	for _, tc := range testCases {
 		suite.Run(tc.name, func() {
 			// Generate a cached context to not leak data between tests
-			ctx, _ := suite.Network.GetContext().CacheContext()
+			ctx, _ := unitNetwork.GetContext().CacheContext()
 
 			// Apply the malleate function to the context
 			if tc.malleate != nil {
 				ctx = tc.malleate(ctx)
 			}
 
-			vmdb := suite.Network.GetStateDB()
+			vmdb := unitNetwork.GetStateDB()
 			vmdb.AddRefund(params.TxGas)
 
 			if tc.leftoverGas > DefaultCoreMsgGasUsage {
@@ -156,12 +185,12 @@ func (suite *KeeperTestSuite) TestGasRefundGas() {
 
 			gasUsed := DefaultCoreMsgGasUsage - tc.leftoverGas
 
-			err = suite.Network.App.GetEVMKeeper().RefundGas(
-				suite.Network.GetContext(),
+			err = unitNetwork.App.GetEVMKeeper().RefundGas(
+				unitNetwork.GetContext(),
 				*coreMsg,
 				tc.leftoverGas,
 				gasUsed,
-				suite.Network.GetBaseDenom(),
+				baseDenom,
 			)
 
 			// Check the error
