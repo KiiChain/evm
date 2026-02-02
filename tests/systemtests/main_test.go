@@ -33,7 +33,7 @@ func TestTxsReplacement(t *testing.T) {
 }
 
 func TestExceptions(t *testing.T) {
-	mempool.TestTxRebroadcasting(t)
+	mempool.TestRunTxBroadcasting(t)
 	mempool.TestMinimumGasPricesZero(t)
 }
 
