@@ -489,6 +489,7 @@ func (s *KeeperTestSuite) TestRefundGas() {
 				unitNetwork.GetContext(),
 				*coreMsg,
 				refund,
+				gasUsed,
 				unitNetwork.GetBaseDenom(),
 			)
 
