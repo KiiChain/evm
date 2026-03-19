@@ -1,0 +1,26 @@
+# Fee abstraction commits to cherry-pick onto upstream releases.
+#
+# Add/remove commit SHAs here to control what gets applied.
+# Lines starting with # are comments. Blank lines are ignored.
+#
+# Commits are applied IN ORDER (top → bottom), so keep them in
+# chronological order (oldest first) to avoid conflicts.
+#
+# To find the right SHA after an upstream rebase, use:
+#   git log --oneline <branch> | grep <keyword>
+
+# --- fee abstraction ---
+09a681f9  # feat: update the gas refundGas function to handle paid fees from the context
+beedbe82  # test: add tests to the new logic for gasRefunds
+bbbef893  # feat: add check if gas is zero
+dac5b6ca  # refactor: apply typo fix
+5ff443d1  # feat: fix inconsistent states
+46f3b4ce  # fix: use correct network type for test
+adada32e  # feat: use correct malleate and unify testdenom
+70088e5f  # fix: correct double coin case
+6c808b1b  # feat: use correct gas used
+04a2921c  # chore: remove commented code
+df73f060  # fix: revert unneeded changes
+63cf7fbc  # fix: remove unneeded comment
+6c071362  # fix: fix encoding using default chain id
+329ec938  # fix: correctly ident error check and return
