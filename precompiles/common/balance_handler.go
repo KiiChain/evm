@@ -85,6 +85,10 @@ func (bh *BalanceHandler) AfterBalanceChange(ctx sdk.Context, stateDB *statedb.S
 				// Bypass blocked addresses
 				continue
 			}
+			if !isMirrorableEVMAddress(spenderAddr) {
+				// Non-20-byte accounts have no bijective EVM mapping; skip mirroring.
+				continue
+			}
 
 			amount, err := ParseAmount(event)
 			if err != nil {
@@ -102,6 +106,12 @@ func (bh *BalanceHandler) AfterBalanceChange(ctx sdk.Context, stateDB *statedb.S
 				// Bypass blocked addresses
 				continue
 			}
+			if !isMirrorableEVMAddress(receiverAddr) {
+				// Non-20-byte accounts have no bijective EVM mapping; skip mirroring.
+				// A 32-byte withdraw address would otherwise be truncated to its trailing
+				// 20 bytes here and minted a duplicate balance on StateDB commit.
+				continue
+			}
 
 			amount, err := ParseAmount(event)
 			if err != nil {
@@ -117,6 +127,10 @@ func (bh *BalanceHandler) AfterBalanceChange(ctx sdk.Context, stateDB *statedb.S
 			}
 			if bh.bankKeeper.BlockedAddr(addr) {
 				// Bypass blocked addresses
+				continue
+			}
+			if !isMirrorableEVMAddress(addr) {
+				// Non-20-byte accounts have no bijective EVM mapping; skip mirroring.
 				continue
 			}
 
@@ -143,4 +157,14 @@ func (bh *BalanceHandler) AfterBalanceChange(ctx sdk.Context, stateDB *statedb.S
 	}
 
 	return nil
+}
+
+// isMirrorableEVMAddress reports whether the SDK account address maps 1:1 to an
+// EVM address. Only exactly-20-byte accounts have a bijective mapping; longer
+// accounts (e.g. 32-byte module, CosmWasm contract, or bech32m accounts) would be
+// truncated by common.BytesToAddress to their trailing 20 bytes. Mirroring such a
+// balance change into the StateDB would mint or burn a duplicate balance on commit
+// and break the native bank supply invariant, so those events must be skipped.
+func isMirrorableEVMAddress(addr sdk.AccAddress) bool {
+	return len(addr) == common.AddressLength
 }
