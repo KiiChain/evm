@@ -1,3 +1,5 @@
+const path = require('path')
+
 module.exports = {
   networks: {
     // Development network is just left as truffle's default settings
@@ -11,7 +13,7 @@ module.exports = {
   },
   compilers: {
     solc: {
-      version: '0.8.18'
+      version: path.join(__dirname, '../../node_modules/solc/soljson.js')
     }
   }
 }

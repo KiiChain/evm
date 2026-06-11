@@ -85,6 +85,9 @@ func (bh *BalanceHandler) AfterBalanceChange(ctx sdk.Context, stateDB *statedb.S
 				// Bypass blocked addresses
 				continue
 			}
+			if !isMirrorableEVMAddress(spenderAddr) {
+				continue
+			}
 
 			amount, err := ParseAmount(event)
 			if err != nil {
@@ -102,6 +105,9 @@ func (bh *BalanceHandler) AfterBalanceChange(ctx sdk.Context, stateDB *statedb.S
 				// Bypass blocked addresses
 				continue
 			}
+			if !isMirrorableEVMAddress(receiverAddr) {
+				continue
+			}
 
 			amount, err := ParseAmount(event)
 			if err != nil {
@@ -117,6 +123,9 @@ func (bh *BalanceHandler) AfterBalanceChange(ctx sdk.Context, stateDB *statedb.S
 			}
 			if bh.bankKeeper.BlockedAddr(addr) {
 				// Bypass blocked addresses
+				continue
+			}
+			if !isMirrorableEVMAddress(addr) {
 				continue
 			}
 
@@ -143,4 +152,8 @@ func (bh *BalanceHandler) AfterBalanceChange(ctx sdk.Context, stateDB *statedb.S
 	}
 
 	return nil
+}
+
+func isMirrorableEVMAddress(addr sdk.AccAddress) bool {
+	return len(addr) == common.AddressLength
 }

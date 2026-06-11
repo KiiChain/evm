@@ -76,7 +76,7 @@ func TestChainUpgrade(t *testing.T) {
 		}(i)
 	}
 
-	systest.Sut.AwaitBlockHeight(t, upgradeHeight-1, 60*time.Second)
+	systest.Sut.AwaitBlockHeight(t, upgradeHeight-1)
 	t.Logf("current_height: %d\n", systest.Sut.CurrentHeight())
 	raw = cli.CustomQuery("q", "gov", "proposal", proposalID)
 	proposalStatus := gjson.Get(raw, "proposal.status").String()
