@@ -4,6 +4,7 @@ import (
 	"fmt"
 
 	"github.com/ethereum/go-ethereum/accounts/abi"
+	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/core/vm"
 
 	cmn "github.com/cosmos/evm/precompiles/common"
@@ -100,6 +101,13 @@ func (p Precompile) SetWithdrawAddress(
 	msgSender := contract.Caller()
 	if msgSender != delegatorHexAddr {
 		return nil, fmt.Errorf(cmn.ErrRequesterIsNotMsgSender, msgSender.String(), delegatorHexAddr.String())
+	}
+
+	if withdrawAddr, decErr := p.addrCdc.StringToBytes(msg.WithdrawAddress); decErr == nil && len(withdrawAddr) != common.AddressLength {
+		return nil, fmt.Errorf(
+			"withdraw address must be exactly %d bytes to be EVM-compatible; got %d bytes: %s",
+			common.AddressLength, len(withdrawAddr), msg.WithdrawAddress,
+		)
 	}
 
 	if _, err = p.distributionMsgServer.SetWithdrawAddress(ctx, msg); err != nil {

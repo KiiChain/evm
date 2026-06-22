@@ -136,6 +136,10 @@ func (s *SystemTestSuite) AfterEachCase(t *testing.T) {
 func (s *SystemTestSuite) ModifyConsensusTimeout(t *testing.T, timeout string, nodeStartArgs ...string) {
 	t.Helper()
 
+	if len(nodeStartArgs) == 0 {
+		nodeStartArgs = DefaultNodeArgs()
+	}
+
 	// Stop the chain if running
 	if s.ChainStarted {
 		s.ResetChain(t)

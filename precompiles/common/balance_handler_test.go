@@ -1,6 +1,7 @@
 package common_test
 
 import (
+	"bytes"
 	"testing"
 
 	"github.com/ethereum/go-ethereum/common"
@@ -184,6 +185,55 @@ func TestAfterBalanceChange(t *testing.T) {
 
 	require.Equal(t, "2", stateDB.GetBalance(spender).String())
 	require.Equal(t, "3", stateDB.GetBalance(receiver).String())
+}
+
+// TestAfterBalanceChangeSkips32ByteAddress is a regression test for the distribution
+// precompile 32-byte withdraw address supply inflation. A 32-byte SDK account (e.g. a
+// bech32 withdraw address, module, or CosmWasm contract account) must NOT be mirrored
+// into the StateDB, because common.BytesToAddress would truncate it to its trailing 20
+// bytes and the StateDB commit would mint a duplicate balance to that EVM account,
+// inflating the native token supply.
+func TestAfterBalanceChangeSkips32ByteAddress(t *testing.T) {
+	setupBalanceHandlerTest(t)
+
+	storeKey := storetypes.NewKVStoreKey("test")
+	tKey := storetypes.NewTransientStoreKey("test_t")
+	ctx := sdktestutil.DefaultContext(storeKey, tKey)
+
+	stateDB := statedb.New(ctx, mocks.NewEVMKeeper(), statedb.NewEmptyTxConfig())
+
+	// 32-byte account; its trailing 20 bytes are what common.BytesToAddress would derive.
+	receiverAcc := sdk.AccAddress(bytes.Repeat([]byte{0xAB}, 32))
+	require.Len(t, receiverAcc, 32)
+	trailing20 := common.BytesToAddress(receiverAcc.Bytes())
+
+	bankKeeper := cmnmocks.NewBankKeeper(t)
+	precisebankModuleAccAddr := authtypes.NewModuleAddress(precisebanktypes.ModuleName)
+	bankKeeper.Mock.On("BlockedAddr", mock.AnythingOfType("types.AccAddress")).Return(func(addr sdk.AccAddress) bool {
+		return addr.Equals(precisebankModuleAccAddr)
+	})
+	bhf := cmn.NewBalanceHandlerFactory(bankKeeper)
+	bh := bhf.NewBalanceHandler()
+	bh.BeforeBalanceChange(ctx)
+
+	stateDB.AddBalance(trailing20, uint256.NewInt(11), tracing.BalanceChangeUnspecified)
+
+	coinsReceived := sdk.NewCoins(sdk.NewInt64Coin(evmtypes.GetEVMCoinDenom(), 7))
+	coinsSpent := sdk.NewCoins(sdk.NewInt64Coin(evmtypes.GetEVMCoinDenom(), 3))
+	ctx.EventManager().EmitEvents(sdk.Events{
+		banktypes.NewCoinReceivedEvent(receiverAcc, coinsReceived),
+		banktypes.NewCoinSpentEvent(receiverAcc, coinsSpent),
+		sdk.NewEvent(
+			precisebanktypes.EventTypeFractionalBalanceChange,
+			sdk.NewAttribute(precisebanktypes.AttributeKeyAddress, receiverAcc.String()),
+			sdk.NewAttribute(precisebanktypes.AttributeKeyDelta, "5"),
+		),
+	})
+
+	err := bh.AfterBalanceChange(ctx, stateDB)
+	require.NoError(t, err)
+
+	require.Equal(t, "11", stateDB.GetBalance(trailing20).String())
 }
 
 func TestAfterBalanceChangeErrors(t *testing.T) {

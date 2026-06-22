@@ -16,6 +16,8 @@ Follow the [migration document](docs/migrations/v0.5.x_to_v0.6.0.md) for upgrade
 
 ### BUG FIXES
 
+- [\#15](https://github.com/KiiChain/evm/pull/15) Fix distribution precompile 32-byte withdraw address inflating native supply by skipping non-20-byte accounts when mirroring balance changes to the StateDB.
+
 ## v0.5.1
 
 ### DEPENDENCIES

@@ -386,7 +386,7 @@ test-system: build-v05 build
 
 build-v05:
 	mkdir -p ./tests/systemtests/binaries/v0.5
-	git checkout v0.5.1
+	git checkout v0.5.1-fork.3
 	make build
 	cp $(BUILDDIR)/evmd ./tests/systemtests/binaries/v0.5
 	git checkout -
