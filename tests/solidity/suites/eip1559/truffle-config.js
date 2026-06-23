@@ -1,4 +1,4 @@
-// const HDWalletProvider = require('@truffle/hdwallet-provider');
+const path = require('path')
 
 module.exports = {
   networks: {
@@ -13,7 +13,7 @@ module.exports = {
   },
   compilers: {
     solc: {
-      version: '0.8.18'
+      version: path.join(__dirname, '../../node_modules/solc/soljson.js')
     }
   }
 }

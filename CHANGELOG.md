@@ -17,6 +17,7 @@ Follow the [migration document](docs/migrations/v0.5.x_to_v0.6.0.md) for upgrade
 ### BUG FIXES
 
 - Fix EVM fee-abstraction gas refund to compute the refund against the full transaction gas (`gasUsed + leftoverGas`) instead of `gasUsed`, bounding the refund by the paid fee and preventing the fee collector from being drained by high gas limit transactions.
+- [\#15](https://github.com/KiiChain/evm/pull/15) Fix distribution precompile 32-byte withdraw address inflating native supply by skipping non-20-byte accounts when mirroring balance changes to the StateDB.
 
 ## v0.5.1
 

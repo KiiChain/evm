@@ -375,9 +375,9 @@ func TestRunTxBroadcasting(t *testing.T) {
 				// Await a block before starting the test case (ensures clean state)
 				s.AwaitNBlocks(t, 1)
 
-				// Capture the initial block height - no blocks should be produced during the test case
+				s.BeforeEachCase(t)
+
 				initialHeight := s.GetCurrentBlockHeight(t, "node0")
-				t.Logf("Test case starting at block height %d", initialHeight)
 
 				// Execute all test actions (broadcasting, mempool checks, etc.)
 				for _, action := range tc.actions {
@@ -386,17 +386,10 @@ func TestRunTxBroadcasting(t *testing.T) {
 					// checking the mempool state in the action functions
 				}
 
-				// Verify no blocks were produced during the test case
-				// All broadcasting and mempool checks should happen within a single block period
-				currentHeight := s.GetCurrentBlockHeight(t, "node0")
-				require.Equal(t, initialHeight, currentHeight,
-					"No blocks should be produced during test case execution - expected height %d but got %d",
-					initialHeight, currentHeight)
-				t.Logf("✓ Test case completed at same block height %d (no blocks produced)", currentHeight)
+				require.Equal(t, initialHeight, s.GetCurrentBlockHeight(t, "node0"), "no block should be produced during the test case")
 
 				// Now await a block to allow transactions to commit
 				s.AwaitNBlocks(t, 1)
-				t.Logf("Awaited block for transaction commits")
 			})
 		}
 	}
