@@ -45,12 +45,19 @@ func (k Keeper) CallEVMWithData(ctx sdk.Context, stateDB *statedb.StateDB, from 
 		return nil, err
 	}
 
+	gasLimit := config.DefaultGasCap
+	if gasCap != nil && gasCap.IsUint64() {
+		if capped := gasCap.Uint64(); capped < gasLimit {
+			gasLimit = capped
+		}
+	}
+
 	msg := core.Message{
 		From:       from,
 		To:         contract,
 		Nonce:      nonce,
 		Value:      big.NewInt(0),
-		GasLimit:   config.DefaultGasCap,
+		GasLimit:   gasLimit,
 		GasPrice:   big.NewInt(0),
 		GasTipCap:  big.NewInt(0),
 		GasFeeCap:  big.NewInt(0),
