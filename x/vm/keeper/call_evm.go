@@ -45,9 +45,6 @@ func (k Keeper) CallEVMWithData(ctx sdk.Context, stateDB *statedb.StateDB, from 
 		return nil, err
 	}
 
-	// Bound the EVM gas limit by the caller-provided gasCap when set, falling
-	// back to DefaultGasCap. This prevents callers (e.g. CosmWasm query bindings)
-	// from triggering EVM execution larger than their remaining gas budget.
 	gasLimit := config.DefaultGasCap
 	if gasCap != nil && gasCap.IsUint64() {
 		if capped := gasCap.Uint64(); capped < gasLimit {
@@ -78,17 +75,7 @@ func (k Keeper) CallEVMWithData(ctx sdk.Context, stateDB *statedb.StateDB, from 
 		return res, errorsmod.Wrap(types.ErrVMExecution, res.VmError)
 	}
 
-	// Charge the SDK gas meter for the actual pre-refund EVM work (MaxUsedGas)
-	// rather than the post-refund GasUsed. Internal calls run with a full refund
-	// and no minimum-gas floor, so GasUsed can fall far below the real compute
-	// performed by validators; billing MaxUsedGas removes that undercharge.
-	// Precompile sub-calls keep their existing accounting.
-	chargedGas := res.GasUsed
-	if !callFromPrecompile && res.MaxUsedGas > chargedGas {
-		chargedGas = res.MaxUsedGas
-	}
-
-	ctx.GasMeter().ConsumeGas(chargedGas, "apply evm message")
+	ctx.GasMeter().ConsumeGas(res.GasUsed, "apply evm message")
 
 	return res, nil
 }
