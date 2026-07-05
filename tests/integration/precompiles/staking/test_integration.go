@@ -2211,7 +2211,7 @@ func TestPrecompileIntegrationTestSuite(t *testing.T, create network.CreateEvmAp
 
 						txArgs.To = &contractTwoAddr
 
-						reverReasonCheck := execRevertedCheck.WithErrContains(
+						revertReasonCheck := execRevertedCheck.WithErrContains(
 							errorsmod.Wrapf(
 								sdkerrors.ErrUnauthorized, "%s is not allowed to receive funds", bondedTokensPoolAccAddr.String(),
 							).Error(),
@@ -2221,7 +2221,7 @@ func TestPrecompileIntegrationTestSuite(t *testing.T, create network.CreateEvmAp
 							s.keyring.GetPrivKey(0),
 							txArgs,
 							args,
-							reverReasonCheck,
+							revertReasonCheck,
 						)
 						Expect(err).To(BeNil(), "error while calling the smart contract: %v", err)
 						Expect(s.network.NextBlock()).To(BeNil())
@@ -2238,6 +2238,59 @@ func TestPrecompileIntegrationTestSuite(t *testing.T, create network.CreateEvmAp
 						bondedTokensPoolFinalBalance := balRes.Balance
 						Expect(bondedTokensPoolFinalBalance.Amount).To(Equal(bondedTokensPoolInitialBalance.Amount))
 					})
+
+					DescribeTable("should not delegate and update balances accordingly across orderings - internal transfer to tokens pool",
+						func(tc struct {
+							before bool
+							after  bool
+							msgAmt *big.Int
+						},
+						) {
+							args.MethodName = "testDelegateWithTransfer"
+							args.Args = []interface{}{
+								common.BytesToAddress(bondedTokensPoolAccAddr),
+								s.keyring.GetAddr(0), valAddr.String(), tc.before, tc.after,
+							}
+
+							txArgs.To = &contractTwoAddr
+							if tc.msgAmt != nil {
+								txArgs.Amount = tc.msgAmt
+							}
+
+							revertReasonCheck := execRevertedCheck.WithErrContains(
+								errorsmod.Wrapf(
+									sdkerrors.ErrUnauthorized, "%s is not allowed to receive funds", bondedTokensPoolAccAddr.String(),
+								).Error(),
+							)
+
+							_, _, err := s.factory.CallContractAndCheckLogs(
+								s.keyring.GetPrivKey(0),
+								txArgs,
+								args,
+								revertReasonCheck,
+							)
+							Expect(err).To(BeNil(), "error while calling the smart contract: %v", err)
+							Expect(s.network.NextBlock()).To(BeNil())
+
+							balRes, err := s.grpcHandler.GetBalanceFromBank(contractTwoAddr.Bytes(), s.bondDenom)
+							Expect(err).To(BeNil())
+							Expect(balRes.Balance.Amount).To(Equal(contractInitialBalance.Amount))
+
+							balRes, err = s.grpcHandler.GetBalanceFromBank(bondedTokensPoolAccAddr, s.bondDenom)
+							Expect(err).To(BeNil())
+							Expect(balRes.Balance.Amount).To(Equal(bondedTokensPoolInitialBalance.Amount))
+						},
+						Entry("internal transfer after precompile call", struct {
+							before bool
+							after  bool
+							msgAmt *big.Int
+						}{before: false, after: true, msgAmt: nil}),
+						Entry("internal transfer after precompile call with matching amounts", struct {
+							before bool
+							after  bool
+							msgAmt *big.Int
+						}{before: false, after: true, msgAmt: big.NewInt(15)}),
+					)
 				})
 
 				It("should not delegate when validator does not exist", func() {
@@ -2249,14 +2302,14 @@ func TestPrecompileIntegrationTestSuite(t *testing.T, create network.CreateEvmAp
 						nonExistingVal.String(),
 					}
 
-					reverReasonCheck := execRevertedCheck.WithErrContains(
+					revertReasonCheck := execRevertedCheck.WithErrContains(
 						stakingtypes.ErrNoValidatorFound.Error(),
 					)
 
 					_, _, err = s.factory.CallContractAndCheckLogs(
 						delegator.Priv,
 						txArgs, callArgs,
-						reverReasonCheck,
+						revertReasonCheck,
 					)
 					Expect(err).To(BeNil(), "error while calling the smart contract: %v", err)
 					Expect(s.network.NextBlock()).To(BeNil())
@@ -2569,7 +2622,7 @@ func TestPrecompileIntegrationTestSuite(t *testing.T, create network.CreateEvmAp
 					valAddr.String(), big.NewInt(1e18), big.NewInt(expCreationHeight),
 				}
 
-				txArgs.GasLimit = 1e9
+				txArgs.GasLimit = 50_000_000
 
 				logCheckArgs := passCheck.
 					WithExpEvents(staking.EventTypeCancelUnbondingDelegation)
@@ -3257,7 +3310,7 @@ func TestPrecompileIntegrationTestSuite(t *testing.T, create network.CreateEvmAp
 
 				callArgs.MethodName = "testDelegateIncrementCounter"
 				callArgs.Args = []interface{}{valAddr.String()}
-				txArgs.GasLimit = 1e9
+				txArgs.GasLimit = 50_000_000
 				txArgs.Amount = delegationAmount
 
 				delegationCheck := passCheck.WithExpEvents(
@@ -3307,7 +3360,7 @@ func TestPrecompileIntegrationTestSuite(t *testing.T, create network.CreateEvmAp
 				callArgs.Args = []interface{}{valAddr.String()}
 
 				txArgs.Amount = delegationAmount
-				txArgs.GasLimit = 1e9
+				txArgs.GasLimit = 50_000_000
 
 				delegationCheck := passCheck.WithExpEvents(
 					staking.EventTypeDelegate,
@@ -3339,7 +3392,7 @@ func TestPrecompileIntegrationTestSuite(t *testing.T, create network.CreateEvmAp
 				callArgs.Args = []interface{}{valAddr.String()}
 
 				txArgs.Amount = big.NewInt(2e18)
-				txArgs.GasLimit = 1e9
+				txArgs.GasLimit = 50_000_000
 
 				delegationCheck := defaultLogCheck.WithErrContains(vm.ErrExecutionReverted.Error())
 				_, _, err = s.factory.CallContractAndCheckLogs(
