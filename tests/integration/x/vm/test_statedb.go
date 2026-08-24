@@ -192,6 +192,92 @@ func (s *KeeperTestSuite) TestAddBalanceOverflow() {
 	}
 }
 
+// TestDelegateThenDrainExploitChain replays, at the StateDB level, the exact
+// two-step call sequence from the reconstructed KiiChain incident exploit
+// contract's delegateThenDrain(): step 1 mirrors a staking precompile's
+// post-delegation balance write-back (an over-delegation subtracted from the
+// delegator's spendable balance), step 2 mirrors the delegator's
+// negated-value call draining a victim by crediting it with
+// `0 - victim.balance` (Solidity's `unchecked { 0 - victim.balance }`).
+//
+// It proves the two hardening guards compose correctly against the chained
+// attack shape: the underflow guard on step 1 alone stops the exploit before
+// the drain is ever attempted, and the overflow guard on step 2 alone stops
+// the drain even when the attacker's balance is already inflated through
+// means unrelated to the delegation write-back.
+func (s *KeeperTestSuite) TestDelegateThenDrainExploitChain() {
+	maxUint256 := func() *uint256.Int { return new(uint256.Int).SetAllOne() }
+
+	// drainAmountFor replays `unchecked { 0 - victim.balance }` from the
+	// exploit contract: it must wrap around uint256, matching Solidity's
+	// unchecked block, not panic.
+	drainAmountFor := func(victimBalance *uint256.Int) *uint256.Int {
+		return new(uint256.Int).Sub(new(uint256.Int), victimBalance)
+	}
+
+	s.Run("step 1 underflow guard stops the exploit before the drain is reached", func() {
+		vmdb := s.StateDB()
+		attacker := utiltx.GenerateAddress()
+		victim := utiltx.GenerateAddress()
+
+		spendable := uint256.NewInt(100)
+		vmdb.AddBalance(attacker, spendable, tracing.BalanceChangeUnspecified)
+		vmdb.AddBalance(victim, uint256.NewInt(50), tracing.BalanceChangeUnspecified)
+		victimBalanceBefore := vmdb.GetBalance(victim)
+
+		// delegate(spendable + 1 wei): the over-delegation the exploit relies
+		// on to underflow the delegator's mirrored EVM balance.
+		delegateAmount := new(uint256.Int).AddUint64(spendable, 1)
+
+		s.Require().Panics(func() {
+			// step 1: staking precompile's post-delegation write-back.
+			vmdb.SubBalance(attacker, delegateAmount, tracing.BalanceChangeUnspecified)
+
+			// step 2 would run here in the real contract, but must never be
+			// reached: the panic above aborts the call first.
+			drainAmount := drainAmountFor(vmdb.GetBalance(victim))
+			vmdb.SubBalance(attacker, drainAmount, tracing.BalanceChangeUnspecified)
+			vmdb.AddBalance(victim, drainAmount, tracing.BalanceChangeUnspecified)
+		})
+
+		// neither balance moved: the whole chained call aborted at step 1.
+		s.Require().Equal(spendable, vmdb.GetBalance(attacker))
+		s.Require().Equal(victimBalanceBefore, vmdb.GetBalance(victim))
+	})
+
+	s.Run("step 2 overflow guard stops the drain even with an already-inflated attacker balance", func() {
+		vmdb := s.StateDB()
+		attacker := utiltx.GenerateAddress()
+		victim := utiltx.GenerateAddress()
+
+		// simulate an attacker balance already at the maximum through means
+		// unrelated to the (already-guarded) delegation write-back, to prove
+		// the overflow guard is an independent layer, not merely downstream
+		// of the underflow guard.
+		vmdb.AddBalance(attacker, maxUint256(), tracing.BalanceChangeUnspecified)
+		vmdb.AddBalance(victim, uint256.NewInt(100), tracing.BalanceChangeUnspecified)
+		victimBalanceBefore := vmdb.GetBalance(victim)
+		attackerBalanceBefore := vmdb.GetBalance(attacker)
+
+		drainAmount := drainAmountFor(victimBalanceBefore)
+
+		s.Require().Panics(func() {
+			// step 2: the negated-value call. The sender-side leg succeeds
+			// (the attacker's inflated balance comfortably covers it, exactly
+			// as in the real exploit)...
+			vmdb.SubBalance(attacker, drainAmount, tracing.BalanceChangeUnspecified)
+			// ...but the recipient-side credit must overflow-guard instead of
+			// wrapping the victim's balance to (near) zero.
+			vmdb.AddBalance(victim, drainAmount, tracing.BalanceChangeUnspecified)
+		})
+
+		// the sender-side leg did debit normally (it never underflowed)...
+		s.Require().Equal(new(uint256.Int).Sub(attackerBalanceBefore, drainAmount), vmdb.GetBalance(attacker))
+		// ...but the victim must be untouched: the drain never completed.
+		s.Require().Equal(victimBalanceBefore, vmdb.GetBalance(victim))
+	})
+}
+
 func (s *KeeperTestSuite) TestSubBalance() {
 	testCases := []struct {
 		name     string
