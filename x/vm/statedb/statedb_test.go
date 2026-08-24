@@ -248,6 +248,11 @@ func (suite *StateDBTestSuite) TestDBError() {
 	}
 }
 
+// maxUint256 returns the maximum representable uint256 value (2^256 - 1).
+func maxUint256() *uint256.Int {
+	return new(uint256.Int).SetAllOne()
+}
+
 func (suite *StateDBTestSuite) TestBalance() {
 	testCases := []struct {
 		name       string
@@ -269,6 +274,13 @@ func (suite *StateDBTestSuite) TestBalance() {
 		{"sub zero balance", func(db *statedb.StateDB) {
 			db.SubBalance(address, uint256.NewInt(0), tracing.BalanceChangeUnspecified)
 		}, uint256.NewInt(0)},
+		{"add balance up to max uint256 boundary", func(db *statedb.StateDB) {
+			db.AddBalance(address, maxUint256(), tracing.BalanceChangeUnspecified)
+		}, maxUint256()},
+		{"add balance reaching max uint256 across two adds", func(db *statedb.StateDB) {
+			db.AddBalance(address, new(uint256.Int).Sub(maxUint256(), uint256.NewInt(1)), tracing.BalanceChangeUnspecified)
+			db.AddBalance(address, uint256.NewInt(1), tracing.BalanceChangeUnspecified)
+		}, maxUint256()},
 	}
 
 	for _, tc := range testCases {
@@ -295,6 +307,52 @@ func (suite *StateDBTestSuite) TestSubBalanceUnderflowPanics() {
 	suite.Require().PanicsWithValue(expectedPanic, func() {
 		db.SubBalance(address, uint256.NewInt(2), tracing.BalanceChangeUnspecified)
 	})
+}
+
+// TestAddBalanceOverflowPanics partitions AddBalance overflow inputs into
+// equivalence classes: smallest-possible overflow (boundary value, one wei
+// past max uint256), a large-amount overflow where both operands are near
+// max uint256, and an overflow driven by a moderate pre-existing balance
+// plus a huge credited amount. Each must panic instead of silently wrapping,
+// mirroring the already-hardened SubBalance underflow guard
+func (suite *StateDBTestSuite) TestAddBalanceOverflowPanics() {
+	testCases := []struct {
+		name        string
+		haveBalance *uint256.Int
+		addAmount   *uint256.Int
+	}{
+		{
+			name:        "smallest overflow: max uint256 plus one wei",
+			haveBalance: maxUint256(),
+			addAmount:   uint256.NewInt(1),
+		},
+		{
+			name:        "large overflow: max uint256 plus max uint256",
+			haveBalance: maxUint256(),
+			addAmount:   maxUint256(),
+		},
+		{
+			name:        "moderate balance overflowed by a huge credit",
+			haveBalance: uint256.NewInt(100),
+			addAmount:   new(uint256.Int).Sub(maxUint256(), uint256.NewInt(98)), // have + amount = max+2
+		},
+	}
+
+	for _, tc := range testCases {
+		suite.Run(tc.name, func() {
+			db := statedb.New(sdk.Context{}.WithEventManager(sdk.NewEventManager()), mocks.NewEVMKeeper(), emptyTxConfig)
+			db.AddBalance(address, tc.haveBalance, tracing.BalanceChangeUnspecified)
+
+			expectedPanic := fmt.Sprintf("state balance overflow for %s: have=%s add=%s",
+				address.Hex(), tc.haveBalance.String(), tc.addAmount.String())
+			suite.Require().PanicsWithValue(expectedPanic, func() {
+				db.AddBalance(address, tc.addAmount, tracing.BalanceChangeUnspecified)
+			})
+
+			// the balance must be left unchanged by the panicking call.
+			suite.Require().Equal(tc.haveBalance, db.GetBalance(address))
+		})
+	}
 }
 
 func (suite *StateDBTestSuite) TestState() {

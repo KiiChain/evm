@@ -132,6 +132,66 @@ func (s *KeeperTestSuite) TestAddBalance() {
 	}
 }
 
+// TestAddBalanceOverflow exercises the AddBalance overflow guard through the
+// full StateDB/keeper integration path. It partitions inputs into: a normal
+// credit that must commit, a boundary credit that lands exactly on max
+// uint256 and must commit, and a credit that would wrap past max uint256 and
+// must instead revert the state transition via panic rather than silently
+// wrapping the account balance
+func (s *KeeperTestSuite) TestAddBalanceOverflow() {
+	maxUint256 := func() *uint256.Int { return new(uint256.Int).SetAllOne() }
+
+	testCases := []struct {
+		name        string
+		malleate    func(vm.StateDB, common.Address)
+		amount      *uint256.Int
+		expectPanic bool
+	}{
+		{
+			"normal credit commits",
+			func(vm.StateDB, common.Address) {},
+			uint256.NewInt(100),
+			false,
+		},
+		{
+			"boundary credit up to max uint256 commits",
+			func(vm.StateDB, common.Address) {},
+			maxUint256(),
+			false,
+		},
+		{
+			"credit past max uint256 reverts instead of wrapping",
+			func(vmdb vm.StateDB, addr common.Address) {
+				vmdb.AddBalance(addr, maxUint256(), tracing.BalanceChangeUnspecified)
+			},
+			uint256.NewInt(1),
+			true,
+		},
+	}
+
+	for _, tc := range testCases {
+		s.Run(tc.name, func() {
+			vmdb := s.StateDB()
+			addr := utiltx.GenerateAddress()
+			tc.malleate(vmdb, addr)
+			prev := vmdb.GetBalance(addr)
+
+			addBalance := func() {
+				vmdb.AddBalance(addr, tc.amount, tracing.BalanceChangeUnspecified)
+			}
+
+			if tc.expectPanic {
+				s.Require().Panics(addBalance)
+				// the balance must be left unchanged by the panicking call.
+				s.Require().Equal(prev, vmdb.GetBalance(addr))
+			} else {
+				s.Require().NotPanics(addBalance)
+				s.Require().Equal(new(uint256.Int).Add(prev, tc.amount), vmdb.GetBalance(addr))
+			}
+		})
+	}
+}
+
 func (s *KeeperTestSuite) TestSubBalance() {
 	testCases := []struct {
 		name     string
