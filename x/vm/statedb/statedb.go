@@ -401,6 +401,9 @@ func (s *StateDB) createObject(addr common.Address) (newobj, prev *stateObject) 
 //
 // Carrying over the balance ensures that Ether doesn't disappear.
 func (s *StateDB) CreateAccount(addr common.Address) {
+	if !s.keeper.IsBaseAccountOrEmpty(s.ctx, addr) {
+		panic(fmt.Sprintf("cannot deploy EVM contract on top of non-base account %s", addr.Hex()))
+	}
 	newObj, prev := s.createObject(addr)
 	if prev != nil {
 		newObj.setBalance(prev.account.Balance)
