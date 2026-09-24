@@ -54,20 +54,22 @@ func SetupNativeErc20(t *testing.T, chain *evmibctesting.TestChain, senderAcc ev
 	evmCtx := chain.GetContext()
 	evmApp := chain.App.(evm.EvmApp)
 
-	ak := evmApp.GetAccountKeeper()
-	deployerAccAddr := sdk.AccAddress(erc20TestDeployer.Bytes())
-	if ak.GetAccount(evmCtx, deployerAccAddr) == nil {
-		ak.SetAccount(evmCtx, ak.NewAccountWithAddress(evmCtx, deployerAccAddr))
+	// Deploy new ERC20 contract with default metadata.
+	// The deployer is a dedicated EOA.
+	deployer := common.BytesToAddress([]byte("erc20-test-deployer"))
+	deployerAccAddr := sdk.AccAddress(deployer.Bytes())
+	if evmApp.GetAccountKeeper().GetAccount(evmCtx, deployerAccAddr) == nil {
+		evmApp.GetAccountKeeper().SetAccount(evmCtx, evmApp.GetAccountKeeper().NewAccountWithAddress(evmCtx, deployerAccAddr))
 	}
 
-	stateDB := statedb.New(chain.GetContext(), chain.App.(evm.EvmApp).GetEVMKeeper(), statedb.NewEmptyTxConfig())
+	stateDB := statedb.New(evmCtx, evmApp.GetEVMKeeper(), statedb.NewEmptyTxConfig())
 	contractAddr, err := DeployERC20Contract(evmCtx, stateDB, evmApp.GetAccountKeeper(), evmApp.GetEVMKeeper(), banktypes.Metadata{
 		DenomUnits: []*banktypes.DenomUnit{
 			{Denom: "example", Exponent: 18},
 		},
 		Name:   "Example",
 		Symbol: "Ex",
-	})
+	}, deployer)
 	if err != nil {
 		t.Fatalf("ERC20 deployment failed: %v", err)
 	}
@@ -93,7 +95,7 @@ func SetupNativeErc20(t *testing.T, chain *evmibctesting.TestChain, senderAcc ev
 		evmCtx,
 		stateDB,
 		contractAbi,
-		erc20TestDeployer,
+		deployer,
 		contractAddr,
 		true,
 		false,
@@ -121,7 +123,8 @@ func SetupNativeErc20(t *testing.T, chain *evmibctesting.TestChain, senderAcc ev
 	}
 }
 
-// SetupNativeErc20 deploys, registers, and mints a native ERC20 token on an EVM-based chain.
+// DeployContract deploys an arbitrary contract on an EVM-based chain.
+// Like DeployERC20Contract, the sender is an EOA rather than a module account.
 func DeployContract(t *testing.T, chain *evmibctesting.TestChain, deploymentData testutiltypes.ContractDeploymentData) (common.Address, error) {
 	t.Helper()
 
@@ -150,14 +153,20 @@ func DeployContract(t *testing.T, chain *evmibctesting.TestChain, deploymentData
 	return crypto.CreateAddress(from, account.Nonce), nil
 }
 
-var erc20TestDeployer = common.HexToAddress("0x000000000000000000000000000000000000beef")
-
+// DeployERC20Contract creates and deploys an ERC20 contract on the EVM with
+// deployer as owner.
+//
+// deployer must be an EOA. Do not pass a module account.
+// It is also required in practice. Contract creation bumps the sender's nonce,
+// SetAccount persists nonce and balance together, and the EVM commit path is
+// not allowed to write a module account's balance.
 func DeployERC20Contract(
 	ctx sdk.Context,
 	stateDB *statedb.StateDB,
 	accountKeeper erc20types.AccountKeeper,
 	evmKeeper erc20types.EVMKeeper,
 	coinMetadata banktypes.Metadata,
+	deployer common.Address,
 ) (common.Address, error) {
 	decimals := uint8(0)
 	if len(coinMetadata.DenomUnits) > 0 {
@@ -178,13 +187,13 @@ func DeployERC20Contract(
 	copy(data[:len(contracts.ERC20MinterBurnerDecimalsContract.Bin)], contracts.ERC20MinterBurnerDecimalsContract.Bin)
 	copy(data[len(contracts.ERC20MinterBurnerDecimalsContract.Bin):], ctorArgs)
 
-	nonce, err := accountKeeper.GetSequence(ctx, erc20TestDeployer.Bytes())
+	nonce, err := accountKeeper.GetSequence(ctx, deployer.Bytes())
 	if err != nil {
 		return common.Address{}, err
 	}
 
-	contractAddr := crypto.CreateAddress(erc20TestDeployer, nonce)
-	_, err = evmKeeper.CallEVMWithData(ctx, stateDB, erc20TestDeployer, nil, data, true, false, nil)
+	contractAddr := crypto.CreateAddress(deployer, nonce)
+	_, err = evmKeeper.CallEVMWithData(ctx, stateDB, deployer, nil, data, true, false, nil)
 	if err != nil {
 		return common.Address{}, errorsmod.Wrapf(err, "failed to deploy contract for %s", coinMetadata.Name)
 	}

@@ -98,6 +98,122 @@ func (s *KeeperTestSuite) TestCreateAccount() {
 	}
 }
 
+// TestIsBaseAccountOrEmpty exercises Keeper.IsBaseAccountOrEmpty directly
+// against the real AccountKeeper: it must report an address as safe for EVM
+// contract deployment only when no account exists there yet, or when the
+// account is a plain BaseAccount -- and must report it unsafe once the
+// address is staged as a DelayedVestingAccount
+func (s *KeeperTestSuite) TestIsBaseAccountOrEmpty() {
+	testCases := []struct {
+		name     string
+		malleate func(sdk.Context, common.Address)
+		expSafe  bool
+	}{
+		{
+			"no account at all",
+			func(sdk.Context, common.Address) {},
+			true,
+		},
+		{
+			"plain funded BaseAccount",
+			func(ctx sdk.Context, addr common.Address) {
+				err := s.Network.App.GetBankKeeper().SendCoins(
+					ctx, s.Keyring.GetAccAddr(0), addr.Bytes(),
+					sdk.NewCoins(sdk.NewCoin(s.Network.GetBaseDenom(), math.NewInt(100))),
+				)
+				s.Require().NoError(err)
+			},
+			true,
+		},
+		{
+			"staged DelayedVestingAccount",
+			func(ctx sdk.Context, addr common.Address) {
+				accAddr := sdk.AccAddress(addr.Bytes())
+				err := s.Network.App.GetBankKeeper().SendCoins(
+					ctx, s.Keyring.GetAccAddr(0), accAddr,
+					sdk.NewCoins(sdk.NewCoin(s.Network.GetBaseDenom(), math.NewInt(2))),
+				)
+				s.Require().NoError(err)
+
+				baseAccount := s.Network.App.GetAccountKeeper().GetAccount(ctx, accAddr).(*authtypes.BaseAccount)
+				vestingAcc, err := vestingtypes.NewDelayedVestingAccount(
+					baseAccount,
+					sdk.NewCoins(sdk.NewCoin(s.Network.GetBaseDenom(), math.NewInt(2))),
+					ctx.BlockTime().Unix()+31536000, // ~1 year, mirrors the incident's staging
+				)
+				s.Require().NoError(err)
+				s.Network.App.GetAccountKeeper().SetAccount(ctx, vestingAcc)
+			},
+			false,
+		},
+	}
+
+	for _, tc := range testCases {
+		s.Run(tc.name, func() {
+			s.SetupTest()
+			ctx := s.Network.GetContext()
+			addr := utiltx.GenerateAddress()
+			tc.malleate(ctx, addr)
+
+			s.Require().Equal(tc.expSafe, s.Network.App.GetEVMKeeper().IsBaseAccountOrEmpty(ctx, addr))
+		})
+	}
+}
+
+// TestCreateAccountBlocksStagedVestingAccount replays the KiiChain incident's
+// account-staging step against the real AccountKeeper: deploying an EVM
+// contract onto an address already turned into a DelayedVestingAccount must
+// panic, and the counterfactual-wallet pattern (a plain BaseAccount created
+// by pre-funding a not-yet-deployed address) must keep working
+func (s *KeeperTestSuite) TestCreateAccountBlocksStagedVestingAccount() {
+	s.Run("staged DelayedVestingAccount blocks deployment", func() {
+		s.SetupTest()
+		ctx := s.Network.GetContext()
+		addr := utiltx.GenerateAddress()
+		accAddr := sdk.AccAddress(addr.Bytes())
+
+		err := s.Network.App.GetBankKeeper().SendCoins(
+			ctx, s.Keyring.GetAccAddr(0), accAddr,
+			sdk.NewCoins(sdk.NewCoin(s.Network.GetBaseDenom(), math.NewInt(2))),
+		)
+		s.Require().NoError(err)
+
+		baseAccount := s.Network.App.GetAccountKeeper().GetAccount(ctx, accAddr).(*authtypes.BaseAccount)
+		vestingAcc, err := vestingtypes.NewDelayedVestingAccount(
+			baseAccount,
+			sdk.NewCoins(sdk.NewCoin(s.Network.GetBaseDenom(), math.NewInt(2))),
+			ctx.BlockTime().Unix()+31536000,
+		)
+		s.Require().NoError(err)
+		s.Network.App.GetAccountKeeper().SetAccount(ctx, vestingAcc)
+
+		vmdb := s.StateDB()
+		s.Require().Panics(func() {
+			vmdb.CreateAccount(addr)
+		})
+	})
+
+	s.Run("pre-funded BaseAccount still allows deployment", func() {
+		s.SetupTest()
+		ctx := s.Network.GetContext()
+		addr := utiltx.GenerateAddress()
+		accAddr := sdk.AccAddress(addr.Bytes())
+
+		// counterfactual-wallet pattern: fund the address before any
+		// contract is deployed there.
+		err := s.Network.App.GetBankKeeper().SendCoins(
+			ctx, s.Keyring.GetAccAddr(0), accAddr,
+			sdk.NewCoins(sdk.NewCoin(s.Network.GetBaseDenom(), math.NewInt(100))),
+		)
+		s.Require().NoError(err)
+
+		vmdb := s.StateDB()
+		s.Require().NotPanics(func() {
+			vmdb.CreateAccount(addr)
+		})
+	})
+}
+
 func (s *KeeperTestSuite) TestAddBalance() {
 	testCases := []struct {
 		name   string
@@ -130,6 +246,152 @@ func (s *KeeperTestSuite) TestAddBalance() {
 			}
 		})
 	}
+}
+
+// TestAddBalanceOverflow exercises the AddBalance overflow guard through the
+// full StateDB/keeper integration path. It partitions inputs into: a normal
+// credit that must commit, a boundary credit that lands exactly on max
+// uint256 and must commit, and a credit that would wrap past max uint256 and
+// must instead revert the state transition via panic rather than silently
+// wrapping the account balance
+func (s *KeeperTestSuite) TestAddBalanceOverflow() {
+	maxUint256 := func() *uint256.Int { return new(uint256.Int).SetAllOne() }
+
+	testCases := []struct {
+		name        string
+		malleate    func(vm.StateDB, common.Address)
+		amount      *uint256.Int
+		expectPanic bool
+	}{
+		{
+			"normal credit commits",
+			func(vm.StateDB, common.Address) {},
+			uint256.NewInt(100),
+			false,
+		},
+		{
+			"boundary credit up to max uint256 commits",
+			func(vm.StateDB, common.Address) {},
+			maxUint256(),
+			false,
+		},
+		{
+			"credit past max uint256 reverts instead of wrapping",
+			func(vmdb vm.StateDB, addr common.Address) {
+				vmdb.AddBalance(addr, maxUint256(), tracing.BalanceChangeUnspecified)
+			},
+			uint256.NewInt(1),
+			true,
+		},
+	}
+
+	for _, tc := range testCases {
+		s.Run(tc.name, func() {
+			vmdb := s.StateDB()
+			addr := utiltx.GenerateAddress()
+			tc.malleate(vmdb, addr)
+			prev := vmdb.GetBalance(addr)
+
+			addBalance := func() {
+				vmdb.AddBalance(addr, tc.amount, tracing.BalanceChangeUnspecified)
+			}
+
+			if tc.expectPanic {
+				s.Require().Panics(addBalance)
+				// the balance must be left unchanged by the panicking call.
+				s.Require().Equal(prev, vmdb.GetBalance(addr))
+			} else {
+				s.Require().NotPanics(addBalance)
+				s.Require().Equal(new(uint256.Int).Add(prev, tc.amount), vmdb.GetBalance(addr))
+			}
+		})
+	}
+}
+
+// TestDelegateThenDrainExploitChain replays, at the StateDB level, the exact
+// two-step call sequence from the reconstructed KiiChain incident exploit
+// contract's delegateThenDrain(): step 1 mirrors a staking precompile's
+// post-delegation balance write-back (an over-delegation subtracted from the
+// delegator's spendable balance), step 2 mirrors the delegator's
+// negated-value call draining a victim by crediting it with
+// `0 - victim.balance` (Solidity's `unchecked { 0 - victim.balance }`).
+//
+// It proves the two hardening guards compose correctly against the chained
+// attack shape: the underflow guard on step 1 alone stops the exploit before
+// the drain is ever attempted, and the overflow guard on step 2 alone stops
+// the drain even when the attacker's balance is already inflated through
+// means unrelated to the delegation write-back.
+func (s *KeeperTestSuite) TestDelegateThenDrainExploitChain() {
+	maxUint256 := func() *uint256.Int { return new(uint256.Int).SetAllOne() }
+
+	// drainAmountFor replays `unchecked { 0 - victim.balance }` from the
+	// exploit contract: it must wrap around uint256, matching Solidity's
+	// unchecked block, not panic.
+	drainAmountFor := func(victimBalance *uint256.Int) *uint256.Int {
+		return new(uint256.Int).Sub(new(uint256.Int), victimBalance)
+	}
+
+	s.Run("step 1 underflow guard stops the exploit before the drain is reached", func() {
+		vmdb := s.StateDB()
+		attacker := utiltx.GenerateAddress()
+		victim := utiltx.GenerateAddress()
+
+		spendable := uint256.NewInt(100)
+		vmdb.AddBalance(attacker, spendable, tracing.BalanceChangeUnspecified)
+		vmdb.AddBalance(victim, uint256.NewInt(50), tracing.BalanceChangeUnspecified)
+		victimBalanceBefore := vmdb.GetBalance(victim)
+
+		// delegate(spendable + 1 wei): the over-delegation the exploit relies
+		// on to underflow the delegator's mirrored EVM balance.
+		delegateAmount := new(uint256.Int).AddUint64(spendable, 1)
+
+		s.Require().Panics(func() {
+			// step 1: staking precompile's post-delegation write-back.
+			vmdb.SubBalance(attacker, delegateAmount, tracing.BalanceChangeUnspecified)
+
+			// step 2 would run here in the real contract, but must never be
+			// reached: the panic above aborts the call first.
+			drainAmount := drainAmountFor(vmdb.GetBalance(victim))
+			vmdb.SubBalance(attacker, drainAmount, tracing.BalanceChangeUnspecified)
+			vmdb.AddBalance(victim, drainAmount, tracing.BalanceChangeUnspecified)
+		})
+
+		// neither balance moved: the whole chained call aborted at step 1.
+		s.Require().Equal(spendable, vmdb.GetBalance(attacker))
+		s.Require().Equal(victimBalanceBefore, vmdb.GetBalance(victim))
+	})
+
+	s.Run("step 2 overflow guard stops the drain even with an already-inflated attacker balance", func() {
+		vmdb := s.StateDB()
+		attacker := utiltx.GenerateAddress()
+		victim := utiltx.GenerateAddress()
+
+		// simulate an attacker balance already at the maximum through means
+		// unrelated to the (already-guarded) delegation write-back, to prove
+		// the overflow guard is an independent layer, not merely downstream
+		// of the underflow guard.
+		vmdb.AddBalance(attacker, maxUint256(), tracing.BalanceChangeUnspecified)
+		vmdb.AddBalance(victim, uint256.NewInt(100), tracing.BalanceChangeUnspecified)
+		victimBalanceBefore := vmdb.GetBalance(victim)
+		attackerBalanceBefore := vmdb.GetBalance(attacker)
+
+		drainAmount := drainAmountFor(victimBalanceBefore)
+
+		s.Require().Panics(func() {
+			// step 2: the negated-value call. The sender-side leg succeeds
+			// (the attacker's inflated balance comfortably covers it, exactly
+			// as in the real exploit)...
+			vmdb.SubBalance(attacker, drainAmount, tracing.BalanceChangeUnspecified)
+			// ...but the recipient-side credit must overflow-guard instead of
+			// wrapping the victim's balance to (near) zero.
+			vmdb.AddBalance(victim, drainAmount, tracing.BalanceChangeUnspecified)
+		})
+
+		// the sender-side leg did debit normally (it never underflowed)...
+		s.Require().Equal(new(uint256.Int).Sub(attackerBalanceBefore, drainAmount), vmdb.GetBalance(attacker))
+		// ...but the victim must be untouched: the drain never completed.
+		s.Require().Equal(victimBalanceBefore, vmdb.GetBalance(victim))
+	})
 }
 
 func (s *KeeperTestSuite) TestSubBalance() {
@@ -1148,6 +1410,90 @@ func (s *KeeperTestSuite) TestSetBalance() {
 	}
 }
 
+func (s *KeeperTestSuite) TestSetBalanceRejectsModuleAccounts() {
+	type setup struct {
+		addr    common.Address
+		current *uint256.Int
+	}
+
+	cases := []struct {
+		name     string
+		prepare  func() setup
+		amountFn func(current *uint256.Int) *uint256.Int
+	}{
+		{
+			name: "mocked module account (isModule arm)",
+			prepare: func() setup {
+				ctx := s.Network.GetContext()
+				ak := s.Network.App.GetAccountKeeper()
+				acc := authtypes.NewEmptyModuleAccount("test-blocked-stale-overwrite", authtypes.Minter)
+				ak.NewAccount(ctx, acc)
+				ak.SetAccount(ctx, acc)
+				modEth := common.BytesToAddress(acc.GetAddress().Bytes())
+				return setup{
+					addr:    modEth,
+					current: s.Network.App.GetEVMKeeper().GetBalance(ctx, modEth),
+				}
+			},
+			amountFn: func(_ *uint256.Int) *uint256.Int { return uint256.NewInt(12345) },
+		},
+		{
+			name: "bonded_tokens_pool, decrease (isBlockedChange arm)",
+			prepare: func() setup {
+				modEth := common.BytesToAddress(authtypes.NewModuleAddress(stakingtypes.BondedPoolName).Bytes())
+				return setup{
+					addr:    modEth,
+					current: s.Network.App.GetEVMKeeper().GetBalance(s.Network.GetContext(), modEth),
+				}
+			},
+			amountFn: func(cur *uint256.Int) *uint256.Int {
+				if cur.IsZero() {
+					return uint256.NewInt(0)
+				}
+				return new(uint256.Int).Sub(cur, uint256.NewInt(1))
+			},
+		},
+		{
+			name: "bonded_tokens_pool, equal (isModule arm, isBlockedChange skipped)",
+			prepare: func() setup {
+				modEth := common.BytesToAddress(authtypes.NewModuleAddress(stakingtypes.BondedPoolName).Bytes())
+				return setup{
+					addr:    modEth,
+					current: s.Network.App.GetEVMKeeper().GetBalance(s.Network.GetContext(), modEth),
+				}
+			},
+			amountFn: func(cur *uint256.Int) *uint256.Int { return new(uint256.Int).Set(cur) },
+		},
+	}
+
+	for _, tc := range cases {
+		s.Run(tc.name, func() {
+			s.SetupTest()
+			st := tc.prepare()
+			amount := tc.amountFn(st.current)
+
+			err := s.Network.App.GetEVMKeeper().SetBalance(s.Network.GetContext(), st.addr, amount)
+			s.Require().Error(err)
+			s.Require().Contains(err.Error(), "is not allowed to receive funds")
+
+			after := s.Network.App.GetEVMKeeper().GetBalance(s.Network.GetContext(), st.addr)
+			s.Require().Equal(st.current, after)
+		})
+	}
+}
+
+func (s *KeeperTestSuite) TestSetBalanceAllowsEOA() {
+	s.SetupTest()
+	addr := utiltx.GenerateAddress()
+	amount := uint256.NewInt(12345)
+
+	err := s.Network.App.GetEVMKeeper().SetBalance(s.Network.GetContext(), addr, amount)
+	s.Require().NoError(err)
+
+	got := s.Network.App.GetEVMKeeper().GetBalance(s.Network.GetContext(), addr)
+	s.Require().Equal(amount, got)
+}
+
 func (s *KeeperTestSuite) TestSetBalanceWithLocked() {
 	amount := common.U2560
 	var locked *big.Int
@@ -1328,91 +1674,6 @@ func (s *KeeperTestSuite) TestDeleteAccount() {
 			}
 		})
 	}
-}
-
-func (s *KeeperTestSuite) TestSetBalanceRejectsModuleAccounts() {
-	type setup struct {
-		addr    common.Address
-		current *uint256.Int
-	}
-
-	mockModuleSetup := func(name string, initialBalance int64) func() setup {
-		return func() setup {
-			ctx := s.Network.GetContext()
-			ak := s.Network.App.GetAccountKeeper()
-			acc := authtypes.NewEmptyModuleAccount(name, authtypes.Minter)
-			ak.NewAccount(ctx, acc)
-			ak.SetAccount(ctx, acc)
-			if initialBalance > 0 {
-				err := s.Network.App.GetBankKeeper().SendCoins(
-					ctx,
-					s.Keyring.GetAccAddr(0),
-					acc.GetAddress(),
-					sdk.NewCoins(sdk.NewCoin(s.Network.GetBaseDenom(), math.NewInt(initialBalance))),
-				)
-				s.Require().NoError(err)
-			}
-			modEth := common.BytesToAddress(acc.GetAddress().Bytes())
-			return setup{
-				addr:    modEth,
-				current: s.Network.App.GetEVMKeeper().GetBalance(ctx, modEth),
-			}
-		}
-	}
-
-	cases := []struct {
-		name     string
-		prepare  func() setup
-		amountFn func(current *uint256.Int) *uint256.Int
-	}{
-		{
-			name:     "mock module account, zero balance, write nonzero",
-			prepare:  mockModuleSetup("test-mod-zero", 0),
-			amountFn: func(_ *uint256.Int) *uint256.Int { return uint256.NewInt(12345) },
-		},
-		{
-			name:    "mock module account, decrease",
-			prepare: mockModuleSetup("test-mod-decrease", 1000),
-			amountFn: func(cur *uint256.Int) *uint256.Int {
-				if cur.IsZero() {
-					return uint256.NewInt(0)
-				}
-				return new(uint256.Int).Sub(cur, uint256.NewInt(1))
-			},
-		},
-		{
-			name:     "mock module account, equal",
-			prepare:  mockModuleSetup("test-mod-equal", 1000),
-			amountFn: func(cur *uint256.Int) *uint256.Int { return new(uint256.Int).Set(cur) },
-		},
-	}
-
-	for _, tc := range cases {
-		s.Run(tc.name, func() {
-			s.SetupTest()
-			st := tc.prepare()
-			amount := tc.amountFn(st.current)
-
-			err := s.Network.App.GetEVMKeeper().SetBalance(s.Network.GetContext(), st.addr, amount)
-			s.Require().Error(err)
-			s.Require().Contains(err.Error(), "is not allowed to receive funds")
-
-			after := s.Network.App.GetEVMKeeper().GetBalance(s.Network.GetContext(), st.addr)
-			s.Require().Equal(st.current, after)
-		})
-	}
-}
-
-func (s *KeeperTestSuite) TestSetBalanceAllowsEOA() {
-	s.SetupTest()
-	addr := utiltx.GenerateAddress()
-	amount := uint256.NewInt(12345)
-
-	err := s.Network.App.GetEVMKeeper().SetBalance(s.Network.GetContext(), addr, amount)
-	s.Require().NoError(err)
-
-	got := s.Network.App.GetEVMKeeper().GetBalance(s.Network.GetContext(), addr)
-	s.Require().Equal(amount, got)
 }
 
 func (s *KeeperTestSuite) TestSetBalanceBlockedNonModuleArm() {
