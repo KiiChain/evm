@@ -19,6 +19,10 @@ import (
 	authtypes "github.com/cosmos/cosmos-sdk/x/auth/types"
 )
 
+// ContextPaidFeesKey stores the coins actually charged for an EVM tx.
+// Fee abstraction sets this so the refund uses that denom, capped by the amount paid.
+type ContextPaidFeesKey struct{}
+
 // GetEthIntrinsicGas returns the intrinsic gas cost for the transaction
 func (k *Keeper) GetEthIntrinsicGas(ctx sdk.Context, msg core.Message, cfg *params.ChainConfig,
 	isContractCreation bool,
@@ -40,9 +44,14 @@ func (k *Keeper) GetEthIntrinsicGas(ctx sdk.Context, msg core.Message, cfg *para
 // consumed in the transaction. Additionally, the function sets the total gas consumed to the value
 // returned by the EVM execution, thus ignoring the previous intrinsic gas consumed during in the
 // AnteHandler.
-func (k *Keeper) RefundGas(ctx sdk.Context, msg core.Message, leftoverGas uint64, denom string) (err error) {
+func (k *Keeper) RefundGas(ctx sdk.Context, msg core.Message, leftoverGas, gasUsed uint64, denom string) (err error) {
 	ctx, span := ctx.StartSpan(tracer, "RefundGas", trace.WithAttributes(attribute.Int64("leftover_gas", int64(leftoverGas)))) //nolint:gosec // G115
 	defer func() { evmtrace.EndSpanErr(span, err) }()
+
+	// No gas was consumed, so there is nothing to refund against.
+	if gasUsed == 0 {
+		return nil
+	}
 
 	// Return EVM tokens for remaining gas, exchanged at the original rate.
 	remaining := new(big.Int).Mul(new(big.Int).SetUint64(leftoverGas), msg.GasPrice)
@@ -52,6 +61,27 @@ func (k *Keeper) RefundGas(ctx sdk.Context, msg core.Message, leftoverGas uint64
 		// negative refund errors
 		return errorsmod.Wrapf(types.ErrInvalidRefund, "refunded amount value cannot be negative %d", remaining.Int64())
 	case 1:
+		// Fee abstraction records the coin that was actually charged.
+		// Refund that coin, scaled by leftover gas over the tx gas limit,
+		// so the sender never receives more than was paid.
+		if val := ctx.Value(ContextPaidFeesKey{}); val != nil {
+			if paidCoins, ok := val.(sdk.Coins); ok && !paidCoins.IsZero() {
+				if len(paidCoins) != 1 {
+					return errorsmod.Wrapf(types.ErrInvalidRefund, "expected a single coin for EVM refunds, got %d", len(paidCoins))
+				}
+				paidCoin := paidCoins[0]
+				denom = paidCoin.Denom
+				remaining = new(big.Int).Div(
+					new(big.Int).Mul(paidCoin.Amount.BigInt(), new(big.Int).SetUint64(leftoverGas)),
+					new(big.Int).SetUint64(msg.GasLimit),
+				)
+			}
+		}
+
+		if remaining.Sign() <= 0 {
+			return nil
+		}
+
 		// positive amount refund
 		refundedCoins := sdk.Coins{sdk.NewCoin(denom, sdkmath.NewIntFromBigInt(remaining))}
 
