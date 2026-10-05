@@ -207,6 +207,24 @@ func (_m *EVMKeeper) GetAccount(ctx types.Context, address common.Address) *stat
 	return r0
 }
 
+// IsBaseAccountOrEmpty provides a mock function with given fields: ctx, address
+func (_m *EVMKeeper) IsBaseAccountOrEmpty(ctx types.Context, address common.Address) bool {
+	ret := _m.Called(ctx, address)
+
+	if len(ret) == 0 {
+		panic("no return value specified for IsBaseAccountOrEmpty")
+	}
+
+	var r0 bool
+	if rf, ok := ret.Get(0).(func(types.Context, common.Address) bool); ok {
+		r0 = rf(ctx, address)
+	} else {
+		r0 = ret.Get(0).(bool)
+	}
+
+	return r0
+}
+
 // GetAccountWithoutBalance provides a mock function with given fields: ctx, addr
 func (_m *EVMKeeper) GetAccountWithoutBalance(ctx types.Context, addr common.Address) *statedb.Account {
 	ret := _m.Called(ctx, addr)
