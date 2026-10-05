@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strconv"
 
 	apitypes "github.com/ethereum/go-ethereum/signer/core/apitypes"
 
@@ -109,7 +110,7 @@ func decodeAminoSignDoc(signDocBytes []byte) (apitypes.TypedData, error) {
 	}
 
 	typedData, err := WrapTxToTypedData(
-		eip155ChainID,
+		chainIDFromSignDoc(aminoDoc.ChainID),
 		signDocBytes,
 	)
 	if err != nil {
@@ -203,7 +204,7 @@ func decodeProtobufSignDoc(signDocBytes []byte) (apitypes.TypedData, error) {
 	}
 
 	typedData, err := WrapTxToTypedData(
-		eip155ChainID,
+		chainIDFromSignDoc(signDoc.ChainId),
 		signBytes,
 	)
 	if err != nil {
@@ -211,6 +212,19 @@ func decodeProtobufSignDoc(signDocBytes []byte) (apitypes.TypedData, error) {
 	}
 
 	return typedData, nil
+}
+
+// chainIDFromSignDoc uses the chain id on the sign doc when it parses as a uint64.
+// Otherwise it falls back to the configured EVM chain id.
+func chainIDFromSignDoc(chainIDStr string) uint64 {
+	if chainIDStr == "" {
+		return eip155ChainID
+	}
+	parsed, err := strconv.ParseUint(chainIDStr, 10, 64)
+	if err != nil {
+		return eip155ChainID
+	}
+	return parsed
 }
 
 // validateCodecInit ensures that both Amino and Protobuf encoding codecs have been set on app init,
