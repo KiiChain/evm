@@ -29,6 +29,10 @@ var _ statedb.Keeper = &atomicTestKeeper{}
 
 func (k *atomicTestKeeper) store(ctx sdk.Context) storetypes.KVStore { return ctx.KVStore(k.key) }
 
+func (k *atomicTestKeeper) IsBaseAccountOrEmpty(_ sdk.Context, _ common.Address) bool {
+	return true
+}
+
 func (k *atomicTestKeeper) GetAccount(ctx sdk.Context, addr common.Address) *statedb.Account {
 	bz := k.store(ctx).Get(addr.Bytes())
 	if bz == nil {

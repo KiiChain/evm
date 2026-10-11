@@ -76,8 +76,8 @@ func (bh *BalanceHandler) AfterBalanceChange(ctx sdk.Context, stateDB *statedb.S
 			if err != nil {
 				return fmt.Errorf("failed to parse spender address from event %q: %w", banktypes.EventTypeCoinSpent, err)
 			}
-			if bh.bankKeeper.BlockedAddr(spenderAddr) {
-				// Bypass blocked addresses
+			if bh.bankKeeper.BlockedAddr(spenderAddr) || !isMirrorableEVMAddress(spenderAddr) {
+				// Bypass blocked addresses and accounts that are not 20 bytes.
 				continue
 			}
 
@@ -93,8 +93,8 @@ func (bh *BalanceHandler) AfterBalanceChange(ctx sdk.Context, stateDB *statedb.S
 			if err != nil {
 				return fmt.Errorf("failed to parse receiver address from event %q: %w", banktypes.EventTypeCoinReceived, err)
 			}
-			if bh.bankKeeper.BlockedAddr(receiverAddr) {
-				// Bypass blocked addresses
+			if bh.bankKeeper.BlockedAddr(receiverAddr) || !isMirrorableEVMAddress(receiverAddr) {
+				// Bypass blocked addresses and accounts that are not 20 bytes.
 				continue
 			}
 
@@ -112,4 +112,8 @@ func (bh *BalanceHandler) AfterBalanceChange(ctx sdk.Context, stateDB *statedb.S
 	}
 
 	return nil
+}
+
+func isMirrorableEVMAddress(addr sdk.AccAddress) bool {
+	return len(addr) == common.AddressLength
 }

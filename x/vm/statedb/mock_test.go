@@ -29,6 +29,10 @@ type MockKeeper struct {
 	codes    map[common.Hash][]byte
 }
 
+func (k MockKeeper) IsBaseAccountOrEmpty(_ sdk.Context, _ common.Address) bool {
+	return true
+}
+
 func (k MockKeeper) GetCodeHash(_ sdk.Context, addr common.Address) common.Hash {
 	return common.HexToHash(addr.Hex())
 }
