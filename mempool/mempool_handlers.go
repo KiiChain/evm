@@ -11,8 +11,6 @@ import (
 	errorsmod "cosmossdk.io/errors"
 
 	sdk "github.com/cosmos/cosmos-sdk/types"
-
-	"github.com/cosmos/evm/mempool/txpool"
 )
 
 const (
@@ -90,8 +88,7 @@ func (m *Mempool) NewCheckTxHandler(txDecoder sdk.TxDecoder, timeout time.Durati
 
 // ErrAsCheckTxResponse converts an error to a ResponseCheckTx object, respecting error wrapping.
 func ErrAsCheckTxResponse(err error) *abci.ResponseCheckTx {
-	if err == nil || errors.Is(err, txpool.ErrAlreadyKnown) {
-		// Already-known is success so a promoted nonce-gap tx can be re-gossiped.
+	if err == nil {
 		return &abci.ResponseCheckTx{Code: abci.CodeTypeOK}
 	}
 
