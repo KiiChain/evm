@@ -17,7 +17,6 @@ import (
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 
-	"github.com/cosmos/evm/mempool/txpool"
 	rpctypes "github.com/cosmos/evm/rpc/types"
 	evmtrace "github.com/cosmos/evm/trace"
 	evmtypes "github.com/cosmos/evm/x/vm/types"
@@ -147,13 +146,6 @@ func (b *Backend) SendRawTransaction(ctx context.Context, data hexutil.Bytes) (r
 	}
 
 	txHash := tx.Hash()
-
-	// User-submitted RPC txs should get "already known" instead of a second insert.
-	if b.Mempool != nil {
-		if pool := b.Mempool.GetTxPool(); pool != nil && pool.Has(txHash) {
-			return txHash, txpool.ErrAlreadyKnown
-		}
-	}
 
 	// publish tx directly to app-side mempool, avoiding broadcasting to
 	// consensus layer.
