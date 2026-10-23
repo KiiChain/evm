@@ -11,6 +11,7 @@
 - [\#1253](https://github.com/cosmos/evm/pull/1253) Guard StateDB `SubBalance` against underflow and parse precompile balance-change events using both base and extended denoms.
 - Make StateDB `Commit()` apply keeper writes through a cache context so a late failure cannot leave a partial write.
 - [\#1277](https://github.com/cosmos/evm/pull/1277) Reject invalid addresses in `tx evm send` instead of silently building a `MsgSend` to a mangled recipient, and pass bech32 recipients through unchanged.
+- [GHSA-7xxp-gq2c-x47x](https://github.com/cosmos/evm/security/advisories/GHSA-7xxp-gq2c-x47x) Reject EIP-712 signed transactions that set `timeout_timestamp`, `unordered`, a fee granter, or a fee payer, since these fields are excluded from the EIP-712 typed data and are not covered by the signature.
 
 ## v0.6.0
 
