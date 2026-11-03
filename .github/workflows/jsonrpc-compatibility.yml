@@ -28,7 +28,7 @@ jobs:
     if: ${{ !startsWith(github.ref, 'refs/tags/') && github.ref != 'refs/heads/main' }}
 
   jsonrpc-compatibility-test:
-    runs-on: depot-ubuntu-22.04-8
+    runs-on: ubuntu-22.04
     timeout-minutes: 45
     steps:
       - uses: actions/setup-go@v5

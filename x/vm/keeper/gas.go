@@ -39,7 +39,7 @@ func (k *Keeper) RefundGas(ctx sdk.Context, msg core.Message, leftoverGas, gasUs
 	remaining := new(big.Int).Mul(new(big.Int).SetUint64(leftoverGas), msg.GasPrice)
 
 	// Check if gas is zero
-	if gasUsed == 0 {
+	if msg.GasLimit == 0 {
 		// If gas is zero, we cannot refund anything, so we return early
 		return nil
 	}
